@@ -1,7 +1,7 @@
 
-  # Make Input Fields Interactive (Community)
+  # Credit acrd digitizations
 
-  This is a code bundle for Make Input Fields Interactive (Community). The original project is available at https://www.figma.com/design/o399UCpwEXNREj2rdEMni8/Make-Input-Fields-Interactive--Community-.
+  This is a code bundle for Make customer experience better
 
   ## Running the code
 
