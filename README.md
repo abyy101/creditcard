@@ -1,5 +1,5 @@
 
-  # Credit acrd digitizations
+  # Credit card digitizations
 
   This is a code bundle for Make customer experience better
 
