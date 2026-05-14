@@ -1,42 +1,198 @@
-import { useState } from 'react';
-import EmploymentDetailsForm from './EmploymentDetailsForm';
-import BankingDetailsForm from './BankingDetailsForm';
+import React, { useRef, useState, type ChangeEvent } from 'react';
+import Tesseract from 'tesseract.js';
+import EmploymentDetailsForm, { type EmploymentFormData } from './EmploymentDetailsForm';
+import BankingDetailsForm, { type BankingFormData } from './BankingDetailsForm';
+import AdditionalCardholderForm, { type AdditionalCardholderFormData } from './AdditionalCardholderForm';
+import PaymentInfoForm, { type PaymentInfoFormData } from './PaymentInfoForm';
+import AgreementDeclarationForm from './AgreementDeclarationForm';
+import ReviewPage, { type PersonalDetailsData } from './ReviewPage';
+import Footer from './Footer';
 
-interface FormData {
-  profilePhoto: File | null;
-  firstName: string;
-  lastName: string;
-  dateOfBirth: string;
-  gender: string;
-  nationality: string;
-  maritalStatus: string;
-  nationalId: string;
-  passportNo: string;
-  placeOfBirth: string;
-}
+type FormData = PersonalDetailsData;
+const absaLogo = new URL('../../assets/ABSA_Group_Limited_Logo.svg', import.meta.url).href;
+
+const emptyPersonalDetails: PersonalDetailsData = {
+  profilePhoto: null,
+  firstName: '',
+  lastName: '',
+  dateOfBirth: '',
+  gender: '',
+  nationality: '',
+  maritalStatus: '',
+  nationalId: '',
+  passportNo: '',
+  placeOfBirth: '',
+  mobileNumber: '',
+  nationalIdUpload: '',
+  taxPinUpload: '',
+  physicalAddress: '',
+  townCity: '',
+  poBox: '',
+  postalCode: '',
+  email: '',
+  proofOfAddressUpload: '',
+};
+
+const KENYAN_ID_ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'application/pdf',
+]);
+const KENYAN_ID_NUMBER_IN_TEXT_REGEX = /\b\d{7,8}\b/;
+const MAX_ID_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024;
+const OCR_MAX_IMAGE_EDGE = 1400;
 
 export default function CreditCardApplication() {
   const [currentStep, setCurrentStep] = useState(1);
-  const [formData, setFormData] = useState<FormData>({
-    profilePhoto: null,
-    firstName: '',
-    lastName: '',
-    dateOfBirth: '',
-    gender: '',
-    nationality: '',
-    maritalStatus: '',
-    nationalId: '',
-    passportNo: '',
-    placeOfBirth: '',
-  });
+  const [formData, setFormData] = useState<FormData>(emptyPersonalDetails);
+
+  const [employmentData, setEmploymentData] = useState<EmploymentFormData | null>(null);
+  const [bankingData, setBankingData] = useState<BankingFormData | null>(null);
+  const [additionalCardholderData, setAdditionalCardholderData] = useState<AdditionalCardholderFormData | null>(null);
+  const [paymentInfoData, setPaymentInfoData] = useState<PaymentInfoFormData | null>(null);
+  const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
+
+  const [editingFromReview, setEditingFromReview] = useState(false);
 
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const [nationalIdUploadError, setNationalIdUploadError] = useState<string | null>(null);
+  const [isNationalIdVerified, setIsNationalIdVerified] = useState(false);
+  const [isValidatingNationalIdUpload, setIsValidatingNationalIdUpload] = useState(false);
+
+  const goNextOrReview = (defaultNext: number) => {
+    if (editingFromReview) {
+      setEditingFromReview(false);
+      setCurrentStep(7);
+    } else {
+      setCurrentStep(defaultNext);
+    }
+  };
+
+  const validateKenyanIdUpload = (file: File) => {
+    const hasAllowedMime = KENYAN_ID_ALLOWED_MIME_TYPES.has(file.type);
+    const hasAllowedExtension = /\.(jpg|jpeg|png|pdf)$/i.test(file.name);
+    if (!hasAllowedMime && !hasAllowedExtension) {
+      return 'Upload a valid Kenyan ID file in JPG, PNG, or PDF format.';
+    }
+    if (file.size > MAX_ID_UPLOAD_SIZE_BYTES) {
+      return 'ID upload is too large. Maximum size is 10MB.';
+    }
+    return null;
+  };
+
+  const normalizeText = (text: string) => text.replace(/\s+/g, ' ').trim().toUpperCase();
+
+  const isLikelyKenyanIdText = (text: string) => {
+    const normalized = normalizeText(text);
+
+    const hasKenyaSignal = /\bKENYA\b|\bREPUBLIC\b/.test(normalized);
+    const hasIdSignal = /\bIDENTITY\b|\bNATIONAL\s*ID\b|\bID\s*(NO|NUMBER)\b|\bCARD\s*NO\b/.test(normalized);
+    const hasLikelyIdNumber = KENYAN_ID_NUMBER_IN_TEXT_REGEX.test(normalized);
+    const hasJamhuriSignal = /\bJAMHURI\b/.test(normalized);
+    const hasHolderSignatureSignal = /\bHOLDER'?S\s*SIGN\b/.test(normalized);
+    const hasBioSignal = /\bDATE\s*OF\s*BIRTH\b|\bDOB\b|\bSEX\b|\bDISTRICT\b|\bPLACE\s*OF\s*ISSUE\b/.test(normalized);
+    const hasNameLikeSignal = /\b[A-Z]{3,}\s+[A-Z]{3,}\b/.test(normalized);
+
+    let confidenceScore = 0;
+    if (/\bREPUBLIC\s+OF\s+KENYA\b/.test(normalized)) confidenceScore += 3;
+    if (hasJamhuriSignal) confidenceScore += 2;
+    if (/\bIDENTITY\s*CARD\b/.test(normalized)) confidenceScore += 3;
+    if (/\bID\s*(NO|NUMBER)\b|\bCARD\s*NO\b/.test(normalized)) confidenceScore += 2;
+    if (/\bDATE\s*OF\s*BIRTH\b|\bDOB\b/.test(normalized)) confidenceScore += 1;
+    if (/\bSEX\b|\bMALE\b|\bFEMALE\b/.test(normalized)) confidenceScore += 1;
+    if (/\bPLACE\s*OF\s*BIRTH\b|\bDISTRICT\b/.test(normalized)) confidenceScore += 1;
+    if (hasHolderSignatureSignal) confidenceScore += 1;
+    if (hasNameLikeSignal) confidenceScore += 1;
+    if (hasLikelyIdNumber) confidenceScore += 2;
+
+    return (
+      (hasKenyaSignal && hasIdSignal && hasLikelyIdNumber) ||
+      (hasKenyaSignal && hasLikelyIdNumber && (hasBioSignal || hasJamhuriSignal || hasHolderSignatureSignal) && confidenceScore >= 6)
+    );
+  };
+
+  const prepareImageForOcr = async (file: File): Promise<File | Blob> => {
+    if (typeof window === 'undefined' || typeof createImageBitmap === 'undefined') return file;
+
+    const bitmap = await createImageBitmap(file);
+    const longestEdge = Math.max(bitmap.width, bitmap.height);
+    if (longestEdge <= OCR_MAX_IMAGE_EDGE) {
+      bitmap.close();
+      return file;
+    }
+
+    const scale = OCR_MAX_IMAGE_EDGE / longestEdge;
+    const targetWidth = Math.max(1, Math.round(bitmap.width * scale));
+    const targetHeight = Math.max(1, Math.round(bitmap.height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      bitmap.close();
+      return file;
+    }
+
+    ctx.drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+    bitmap.close();
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((result) => resolve(result), 'image/jpeg', 0.9);
+    });
+
+    return blob ?? file;
+  };
+
+  const extractTextFromPdf = async (file: File) => {
+    const data = new Uint8Array(await file.arrayBuffer());
+    const pdfjs = await import('pdfjs-dist');
+    if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+    }
+    const document = await pdfjs.getDocument({ data }).promise;
+
+    const pagesToRead = Math.min(document.numPages, 2);
+    let text = '';
+    for (let pageNumber = 1; pageNumber <= pagesToRead; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      text += ` ${content.items.map((item) => ('str' in item ? item.str : '')).join(' ')}`;
+    }
+
+    return text;
+  };
+
+  const validateKenyanIdContent = async (file: File) => {
+    try {
+      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        const extractedText = await extractTextFromPdf(file);
+        // Some scanned PDFs have little/no embedded text and would need OCR in backend for reliable verification.
+        if (normalizeText(extractedText).length < 20) {
+          return 'Could not read enough text from this PDF. Please upload a clearer PDF or an image of the ID.';
+        }
+        return isLikelyKenyanIdText(extractedText)
+          ? null
+          : 'The uploaded PDF does not appear to be a Kenyan National ID document.';
+      }
+
+      const imageForOcr = await prepareImageForOcr(file);
+      const { data } = await Tesseract.recognize(imageForOcr, 'eng');
+      return isLikelyKenyanIdText(data.text)
+        ? null
+        : 'The uploaded image does not appear to be a Kenyan National ID document.';
+    } catch (_error) {
+      return 'We could not verify this document. Please upload a clearer image/PDF of the Kenyan ID.';
+    }
+  };
 
   const handleInputChange = (field: keyof FormData, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setFormData((prev) => ({ ...prev, profilePhoto: file }));
@@ -48,209 +204,362 @@ export default function CreditCardApplication() {
     }
   };
 
+  const handleDocumentUpload = async (field: keyof FormData, e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (field === 'nationalIdUpload') {
+        setIsNationalIdVerified(false);
+        const idUploadError = validateKenyanIdUpload(file);
+        if (idUploadError) {
+          setNationalIdUploadError(idUploadError);
+          return;
+        }
+
+        setIsValidatingNationalIdUpload(true);
+        const contentValidationError = await validateKenyanIdContent(file);
+        setIsValidatingNationalIdUpload(false);
+
+        if (contentValidationError) {
+          setNationalIdUploadError(contentValidationError);
+          return;
+        }
+
+        setNationalIdUploadError(null);
+        setIsNationalIdVerified(true);
+      }
+      handleInputChange(field, file.name);
+    }
+  };
+
   const handleProceed = () => {
-    console.log('Form Data:', formData);
-    setCurrentStep(2);
+    if (!formData.nationalIdUpload) {
+      setNationalIdUploadError('Please upload a valid Kenyan ID document.');
+      setIsNationalIdVerified(false);
+      return;
+    }
+
+    if (isValidatingNationalIdUpload) {
+      setNationalIdUploadError('Please wait while we verify your National ID document.');
+      return;
+    }
+
+    if (nationalIdUploadError || !isNationalIdVerified) {
+      setNationalIdUploadError((current) => current ?? 'Please upload a verifiable Kenyan National ID document.');
+      return;
+    }
+
+    console.log('Personal Details:', formData);
+    goNextOrReview(2);
   };
 
   const handleBack = () => {
     setCurrentStep(1);
   };
 
-  const handleEmploymentProceed = () => {
-    setCurrentStep(3);
+  const handleEmploymentProceed = (data: EmploymentFormData) => {
+    setEmploymentData(data);
+    goNextOrReview(3);
   };
 
-  const handleBankingProceed = () => {
-    setCurrentStep(4);
+  const handleBankingProceed = (data: BankingFormData) => {
+    setBankingData(data);
+    goNextOrReview(4);
+  };
+
+  const handleAdditionalCardholderProceed = (data: AdditionalCardholderFormData) => {
+    setAdditionalCardholderData(data);
+    goNextOrReview(5);
+  };
+
+  const handlePaymentInfoProceed = (data: PaymentInfoFormData) => {
+    setPaymentInfoData(data);
+    goNextOrReview(6);
+  };
+
+  const handleAgreementSubmit = (capturedSignature: string) => {
+    setSignatureDataUrl(capturedSignature);
+    setEditingFromReview(false);
+    setCurrentStep(7);
+  };
+
+  const handleEditSection = (step: number) => {
+    setEditingFromReview(true);
+    setCurrentStep(step);
+  };
+
+  const handleClearForm = () => {
+    setFormData(emptyPersonalDetails);
+    setEmploymentData(null);
+    setBankingData(null);
+    setAdditionalCardholderData(null);
+    setPaymentInfoData(null);
+    setSignatureDataUrl(null);
+    setPhotoPreview(null);
+    setNationalIdUploadError(null);
+    setIsNationalIdVerified(false);
+    setIsValidatingNationalIdUpload(false);
+    setEditingFromReview(false);
+    setCurrentStep(1);
+  };
+
+  const handleFinalSubmit = () => {
+    console.log('Final Application Payload:', {
+      personalDetails: formData,
+      photoPreview,
+      employmentData,
+      bankingData,
+      additionalCardholderData,
+      paymentInfoData,
+      signatureDataUrl,
+    });
+    alert('Application submitted! (Wire this up to your backend.)');
   };
 
   const steps = [
-    { number: 1, name: 'Personal Details', description: 'Lorem Ipsum is simply', icon: 'person', completed: currentStep > 1 },
-    { number: 2, name: 'Employment Details', description: 'Lorem Ipsum is simply', icon: 'work', completed: currentStep > 2 },
-    { number: 3, name: 'Banking Details', description: 'Lorem Ipsum is simply', icon: 'bank', completed: currentStep > 3 },
-    { number: 4, name: 'Card Repayments', description: 'Lorem Ipsum is simply', icon: 'card', completed: currentStep > 4 },
-    { number: 5, name: 'Payment Info', description: 'Lorem Ipsum is simply', icon: 'payment', completed: currentStep > 5 },
-    { number: 6, name: 'Agreement and Declaration', description: 'Lorem Ipsum is simply', icon: 'agreement', completed: false },
+    { number: 1, name: 'Personal Details', description: 'Name,National ID etc', completed: currentStep > 1 },
+    { number: 2, name: 'Employment Details', description: 'Employee,employer Details', completed: currentStep > 2 },
+    { number: 3, name: 'Banking Details', description: 'Card repayments,preference', completed: currentStep > 3 },
+    { number: 4, name: 'Additional Cardholder', description: 'Additional cardholder details', completed: currentStep > 4 },
+    { number: 5, name: 'Payment info', description: 'Employee,employer Details', completed: currentStep > 5 },
+    { number: 6, name: 'Agreement and Declaration', description: 'agreement,signature', completed: currentStep > 6 },
   ];
 
-  return (
-    <div className="min-h-screen bg-[#f5f5f5] relative">
-      {/* Header */}
-      <div className="bg-[#dc0032] h-[56px] flex items-center px-6">
-        <div className="relative size-[40px] rounded-full bg-white flex items-center justify-center">
-          <div className="relative size-[32px]">
-            <svg className="absolute block size-full" fill="none" preserveAspectRatio="none" viewBox="0 0 49 48">
-              <path d="M24.5 48C38.031 48 49 37.2548 49 24C49 10.7452 38.031 3.05176e-05 24.5 3.05176e-05C10.969 3.05176e-05 0 10.7452 0 24C0 37.2548 10.969 48 24.5 48Z" fill="#DC0032" />
-            </svg>
-          </div>
-        </div>
-        <button className="ml-6 text-white">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="3" y1="12" x2="21" y2="12"/>
-            <line x1="3" y1="6" x2="21" y2="6"/>
-            <line x1="3" y1="18" x2="21" y2="18"/>
+  const renderInput = (
+    label: string,
+    field: keyof FormData,
+    placeholder?: string,
+    required = false,
+    type: 'text' | 'date' = 'text'
+  ) => (
+    <div>
+      <label className="mb-2 block text-[14px] font-medium text-[#364153]">
+        {label} {required && <span className="text-[#fb2c36]">*</span>}
+      </label>
+      <input
+        type={type}
+        placeholder={placeholder}
+        value={String(formData[field] ?? '')}
+        onChange={(e) => handleInputChange(field, e.target.value)}
+        className="h-[42px] w-full rounded-[8px] border border-[#d1d5dc] px-[13px] text-[15px] leading-[24px] text-[#0a0a0a] placeholder:text-[rgba(10,10,10,0.5)] focus:outline-none focus:ring-1 focus:ring-[#dc0032]"
+      />
+    </div>
+  );
+
+  const renderUploadField = (
+    label: string,
+    field: keyof FormData,
+    required = false,
+    error?: string | null,
+    accept?: string,
+    validating = false
+  ) => (
+    <div>
+      <label className="mb-2 block text-[14px] font-medium text-[#364153]">
+        {label} {required && <span className="text-[#fb2c36]">*</span>}
+      </label>
+      <button
+        type="button"
+        onClick={() => fileInputRefs.current[String(field)]?.click()}
+        disabled={validating}
+        className={`flex h-[42px] w-full items-center justify-between rounded-[8px] border bg-white px-[13px] text-left ${
+          error ? 'border-[#dc2626]' : 'border-[#d1d5dc]'
+        } ${validating ? 'cursor-not-allowed opacity-70' : ''}`}
+      >
+        <span className={`truncate text-[15px] ${formData[field] ? 'text-[#0a0a0a]' : 'text-[rgba(10,10,10,0.5)]'}`}>
+          {formData[field] ? String(formData[field]) : 'Upload document'}
+        </span>
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" className="shrink-0 text-[#161616]">
+          <path d="M9 11V4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M6.5 6.5L9 4L11.5 6.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M4 10.5V13.5H14V10.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <input
+        ref={(el) => {
+          fileInputRefs.current[String(field)] = el;
+        }}
+        type="file"
+        accept={accept}
+        className="hidden"
+        onChange={(e) => handleDocumentUpload(field, e)}
+      />
+      {validating && <p className="mt-2 text-[12px] font-medium text-[#364153]">Validating National ID document...</p>}
+      {error && <p className="mt-2 text-[12px] font-medium text-[#dc2626]">{error}</p>}
+    </div>
+  );
+
+  const renderStepIcon = (stepNumber: number) => {
+    switch (stepNumber) {
+      case 1:
+        return (
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+            <path d="M8 7H16M8 12H16M8 17H13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            <rect x="4" y="4" width="16" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
           </svg>
+        );
+      case 2:
+        return (
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+            <rect x="3.5" y="5.5" width="17" height="13" rx="2" stroke="currentColor" strokeWidth="1.8" />
+            <circle cx="9" cy="11" r="2" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M13.5 10H17.5M13.5 13H17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        );
+      case 3:
+        return (
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+            <rect x="6" y="3.5" width="12" height="17" rx="2" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M9 8H15M9 12H15M9 16H12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        );
+      case 4:
+        return (
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+            <rect x="5" y="5" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M8.5 12L11 14.5L15.5 10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        );
+      case 5:
+        return (
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+            <rect x="3.5" y="6" width="17" height="12" rx="2" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M3.5 10H20.5" stroke="currentColor" strokeWidth="1.8" />
+          </svg>
+        );
+      default:
+        return (
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+            <path d="M8 7H16M8 12H16M8 17H13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            <rect x="4" y="4" width="16" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
+          </svg>
+        );
+    }
+  };
+
+  const today = new Date();
+  const weekday = today.toLocaleDateString('en-GB', { weekday: 'long' });
+  const day = String(today.getDate()).padStart(2, '0');
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const year = today.getFullYear();
+  const currentDateLabel = `${weekday}, ${day}.${month}.${year}`;
+
+  return (
+    <div className="relative flex h-screen flex-col overflow-hidden bg-[#f5f5f5] font-['Source_Sans_3','Roboto',Arial,sans-serif]">
+      <div className="flex h-[72px] shrink-0 items-center border-b border-[#d7dce2] bg-white px-3">
+        <button
+          type="button"
+          className="flex h-[52px] items-center justify-center rounded-[4px] px-[2px] hover:bg-[#f8fafc]"
+          aria-label="Absa home"
+        >
+          <img src={absaLogo} alt="Absa logo" className="h-[44px] w-auto object-contain" />
         </button>
+        <div className="mx-3 h-[22px] w-px bg-[#e5e7eb]" />
+        <span className="text-[13px] font-medium text-[#364153]">Credit card application</span>
+        <div className="ml-auto h-[18px] w-px bg-[#eef1f4]" aria-hidden />
+        <span className="ml-3 text-[11px] text-[#64748b]">Personal</span>
+        <span className="ml-2 rounded-full bg-[#fef2f2] px-2 py-[2px] text-[10px] font-semibold text-[#b42318]">
+          Kenya
+        </span>
       </div>
 
-      {/* Date and user info */}
-      <div className="absolute right-6 top-[80px] text-sm text-gray-600">
-        Thursday, 18. July 2013 | Your security SurePhone™ is: <span className="font-bold">Sleve81</span>
-      </div>
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="mx-auto flex h-full min-h-0 w-[96%] max-w-[1460px] items-start gap-10 pt-8">
+          <aside className="sticky top-0 w-[300px] shrink-0 self-start pt-12">
+            <ol className="relative border-s-2 border-[#e5e7eb] text-[#4b5563]">
+              {steps.map((step, index) => {
+                const isActive = currentStep === step.number;
+                const isCompleted = step.completed;
+                const stepSpacing = index === steps.length - 1 ? '' : 'mb-17';
 
-      <div className="flex mt-[60px] px-[40px] gap-8">
-        {/* Stepper */}
-        <div className="w-[240px] flex-shrink-0">
-          <div className="flex flex-col gap-8">
-            {steps.map((step, index) => (
-              <div key={step.number} className="flex items-start gap-3">
-                <div className="flex flex-col items-center">
-                  <div
-                    className={`size-[40px] rounded-full flex items-center justify-center font-bold transition-colors ${
-                      step.completed
-                        ? 'bg-green-500 text-white'
-                        : currentStep === step.number
-                        ? 'bg-[#dc0032] text-white'
-                        : 'border-2 border-gray-300 bg-white text-gray-400'
-                    }`}
-                  >
-                    {step.completed ? (
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path d="M4 10L8 14L16 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                    ) : step.number === 1 ? (
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <circle cx="10" cy="7" r="3" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-                        <path d="M4 18C4 14.6863 6.68629 12 10 12C13.3137 12 16 14.6863 16 18" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-                      </svg>
-                    ) : step.number === 2 ? (
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <rect x="3" y="6" width="14" height="10" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-                        <path d="M7 6V4C7 3.44772 7.44772 3 8 3H12C12.5523 3 13 3.44772 13 4V6" stroke="currentColor" strokeWidth="1.5"/>
-                      </svg>
-                    ) : null}
-                  </div>
-                  {index < steps.length - 1 && (
-                    <div className={`w-[2px] h-[40px] mt-2 ${step.completed ? 'bg-green-500' : 'bg-gray-300'}`} />
-                  )}
-                </div>
-                <div>
-                  <div className={`${currentStep === step.number ? 'font-bold text-[#101828]' : 'text-gray-600'}`}>
-                    {step.name}
-                  </div>
-                  <div className="text-sm text-gray-400">{step.description}</div>
-                </div>
-              </div>
-            ))}
+                return (
+                  <li key={step.number} className={`ms-7 ${stepSpacing}`}>
+                    <span
+                      className={`absolute -start-[17px] flex h-8 w-8 items-center justify-center rounded-full ring-4 ring-[#f5f5f5] ${
+                        isCompleted
+                          ? 'bg-[#dc0032] text-white'
+                          : isActive
+                            ? 'bg-[#f3f4f6] text-[#4b5563]'
+                            : 'bg-[#f3f4f6] text-[#6b7280]'
+                      }`}
+                    >
+                      {isCompleted ? (
+                        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none">
+                          <path d="M5 12L10 17L19 8" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      ) : (
+                        renderStepIcon(step.number)
+                      )}
+                    </span>
+                    <h3 className={`leading-tight ${isActive || isCompleted ? 'text-[#1f3b5b]' : 'text-[#334155]'} text-[19px] font-medium`}>
+                      {step.name}
+                    </h3>
+                    <p className="text-[14px] text-[#64748b]">{step.description}</p>
+                  </li>
+                );
+              })}
+            </ol>
+          </aside>
+
+        <div className="h-full min-h-0 flex-1 overflow-y-auto pb-20 pr-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="mb-6 flex justify-between">
+            <h1 className="text-[42px] font-semibold leading-[1.1] text-black">Credit Card Application Form</h1>
+            <div className="pt-4 text-[11px] text-[#2d2323]">{currentDateLabel}</div>
           </div>
-        </div>
-
-        {/* Main Form */}
-        <div className="flex-1 max-w-[900px]">
-          <h1 className="text-3xl font-bold text-[#101828] mb-8">Credit Card Application Form</h1>
 
           {currentStep === 1 && (
             <>
-              <div className="bg-white rounded-[10px] border border-[#e5e7eb] p-6">
-                {/* Section Header */}
-                <div className="flex items-center gap-2 pb-4 border-b border-[#e5e7eb] mb-6">
-                  <div className="size-[20px] text-[#f93f24]">
+              <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-[25px] shadow-[0px_2px_4px_rgba(16,24,40,0.14)]">
+                <div className="mb-6 flex items-center gap-2 border-b border-[#e5e7eb] pb-4">
+                  <div className="h-[20px] w-[20px] text-[#f93f24]">
                     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                      <circle cx="10" cy="7" r="3" stroke="currentColor" strokeWidth="1.5"/>
-                      <path d="M4 18C4 14.6863 6.68629 12 10 12C13.3137 12 16 14.6863 16 18" stroke="currentColor" strokeWidth="1.5"/>
+                      <circle cx="10" cy="7" r="3" stroke="currentColor" strokeWidth="1.5" />
+                      <path d="M4 18C4 14.6863 6.68629 12 10 12C13.3137 12 16 14.6863 16 18" stroke="currentColor" strokeWidth="1.5" />
                     </svg>
                   </div>
-                  <h2 className="text-lg font-bold text-[#101828]">Personal Information</h2>
+                  <h2 className="text-[34px] font-bold leading-[1.1] text-[#101828]">Personal Information</h2>
                 </div>
 
-                {/* Profile Photo */}
                 <div className="mb-6">
-                  <label className="block text-[13.1px] text-[#364153] mb-2">Profile Photo</label>
+                  <label className="mb-2 block text-[14px] font-medium text-[#364153]">Profile Photo</label>
                   <div className="flex items-center gap-4">
-                    <div className="size-[128px] border-2 border-dashed border-[#d1d5dc] rounded-[10px] bg-[#f9fafb] flex items-center justify-center overflow-hidden">
+                    <div className="flex h-[128px] w-[128px] items-center justify-center overflow-hidden rounded-[10px] border-2 border-dashed border-[#d1d5dc] bg-[#f9fafb]">
                       {photoPreview ? (
-                        <img src={photoPreview} alt="Profile preview" className="size-full object-cover" />
+                        <img src={photoPreview} alt="Profile preview" className="h-full w-full object-cover" />
                       ) : (
                         <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                          <circle cx="24" cy="18" r="8" stroke="#99A1AF" strokeWidth="4"/>
-                          <path d="M8 40C8 32 15.1634 25.6 24 25.6C32.8366 25.6 40 32 40 40" stroke="#99A1AF" strokeWidth="4"/>
+                          <circle cx="24" cy="18" r="8" stroke="#99A1AF" strokeWidth="4" />
+                          <path d="M8 40C8 32 15.1634 25.6 24 25.6C32.8366 25.6 40 32 40 40" stroke="#99A1AF" strokeWidth="4" />
                         </svg>
                       )}
                     </div>
                     <div className="flex flex-col gap-2">
-                      <label className="bg-[#dc0032] text-white px-4 py-2 rounded-[8px] cursor-pointer flex items-center gap-2 hover:bg-[#c0002b] transition-colors">
+                      <label className="flex cursor-pointer items-center gap-2 rounded-[8px] bg-[#dc0032] px-4 py-2 text-white">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                          <path d="M8 3V13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                          <path d="M13 8H3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                          <path d="M8 3L11 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                          <path d="M8 3L5 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M8 3V13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                          <path d="M13 8H3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                          <path d="M8 3L11 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="M8 3L5 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
-                        <span className="text-[15px]">Upload Photo</span>
+                        <span className="text-[15px] font-semibold">Upload Photo</span>
                         <input type="file" accept="image/jpeg,image/png" className="hidden" onChange={handlePhotoUpload} />
                       </label>
-                      <span className="text-[11.4px] text-[#6a7282]">JPG,PNG</span>
+                      <span className="text-[12px] text-[#6a7282]">JPG,PNG</span>
                     </div>
                   </div>
                 </div>
 
-                {/* Form Grid */}
                 <div className="grid grid-cols-2 gap-4">
-                  {/* First Name */}
+                  {renderInput('First Name', 'firstName', 'Enter first name', true)}
+                  {renderInput('Last Name', 'lastName', 'Enter last name', true)}
+                  {renderInput('Date of Birth', 'dateOfBirth', 'mm/dd/yyyy', true, 'date')}
                   <div>
-                    <label className="block text-[13.1px] text-[#364153] mb-2">
-                      First Name <span className="text-[#fb2c36]">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Enter first name"
-                      value={formData.firstName}
-                      onChange={(e) => handleInputChange('firstName', e.target.value)}
-                      className="w-full px-[13px] py-[11px] border border-[#d1d5dc] rounded-[8px] text-[15px] focus:outline-none focus:ring-2 focus:ring-[#dc0032] focus:border-transparent"
-                    />
-                  </div>
-
-                  {/* Last Name */}
-                  <div>
-                    <label className="block text-[13.1px] text-[#364153] mb-2">
-                      Last Name <span className="text-[#fb2c36]">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Enter last name"
-                      value={formData.lastName}
-                      onChange={(e) => handleInputChange('lastName', e.target.value)}
-                      className="w-full px-[13px] py-[11px] border border-[#d1d5dc] rounded-[8px] text-[15px] focus:outline-none focus:ring-2 focus:ring-[#dc0032] focus:border-transparent"
-                    />
-                  </div>
-
-                  {/* Date of Birth */}
-                  <div>
-                    <label className="block text-[13.1px] text-[#364153] mb-2">
-                      Date of Birth <span className="text-[#fb2c36]">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={formData.dateOfBirth}
-                      onChange={(e) => handleInputChange('dateOfBirth', e.target.value)}
-                      className="w-full px-[13px] py-[9px] border border-[#d1d5dc] rounded-[8px] text-[15px] focus:outline-none focus:ring-2 focus:ring-[#dc0032] focus:border-transparent"
-                    />
-                  </div>
-
-                  {/* Gender */}
-                  <div>
-                    <label className="block text-[13.1px] text-[#364153] mb-2">
+                    <label className="mb-2 block text-[13px] text-[#364153]">
                       Gender <span className="text-[#fb2c36]">*</span>
                     </label>
                     <select
                       value={formData.gender}
                       onChange={(e) => handleInputChange('gender', e.target.value)}
-                      className="w-full px-[13px] py-[9px] border border-[#d1d5dc] rounded-[8px] text-[15px] focus:outline-none focus:ring-2 focus:ring-[#dc0032] focus:border-transparent appearance-none bg-white"
-                      style={{
-                        backgroundImage: `url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L6 6L11 1' stroke='%23999' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
-                        backgroundRepeat: 'no-repeat',
-                        backgroundPosition: 'right 13px center',
-                      }}
+                      className="h-[42px] w-full rounded-[8px] border border-[#d1d5dc] px-[13px] text-[15px] focus:outline-none focus:ring-1 focus:ring-[#dc0032]"
                     >
                       <option value="">Select gender</option>
                       <option value="male">Male</option>
@@ -259,146 +568,126 @@ export default function CreditCardApplication() {
                     </select>
                   </div>
 
-                  {/* Nationality */}
+                  {renderInput('Nationality', 'nationality', '', true)}
                   <div>
-                    <label className="block text-[13.1px] text-[#364153] mb-2">
-                      Nationality <span className="text-[#fb2c36]">*</span>
-                    </label>
-                    <select
-                      value={formData.nationality}
-                      onChange={(e) => handleInputChange('nationality', e.target.value)}
-                      className="w-full px-[13px] py-[9px] border border-[#d1d5dc] rounded-[8px] text-[15px] focus:outline-none focus:ring-2 focus:ring-[#dc0032] focus:border-transparent appearance-none bg-white"
-                      style={{
-                        backgroundImage: `url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L6 6L11 1' stroke='%23999' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
-                        backgroundRepeat: 'no-repeat',
-                        backgroundPosition: 'right 13px center',
-                      }}
-                    >
-                      <option value="">Select nationality</option>
-                      <option value="us">United States</option>
-                      <option value="uk">United Kingdom</option>
-                      <option value="ca">Canada</option>
-                      <option value="au">Australia</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </div>
-
-                  {/* Marital Status */}
-                  <div>
-                    <label className="block text-[13.1px] text-[#364153] mb-2">
+                    <label className="mb-2 block text-[13px] text-[#364153]">
                       Marital Status <span className="text-[#fb2c36]">*</span>
                     </label>
                     <select
                       value={formData.maritalStatus}
                       onChange={(e) => handleInputChange('maritalStatus', e.target.value)}
-                      className="w-full px-[13px] py-[9px] border border-[#d1d5dc] rounded-[8px] text-[15px] focus:outline-none focus:ring-2 focus:ring-[#dc0032] focus:border-transparent appearance-none bg-white"
-                      style={{
-                        backgroundImage: `url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L6 6L11 1' stroke='%23999' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
-                        backgroundRepeat: 'no-repeat',
-                        backgroundPosition: 'right 13px center',
-                      }}
+                      className="h-[42px] w-full rounded-[8px] border border-[#d1d5dc] px-[13px] text-[15px] focus:outline-none focus:ring-1 focus:ring-[#dc0032]"
                     >
-                      <option value="">Select marital status</option>
+                      <option value=""> </option>
                       <option value="single">Single</option>
                       <option value="married">Married</option>
                       <option value="divorced">Divorced</option>
                       <option value="widowed">Widowed</option>
                     </select>
                   </div>
+                  {renderInput('National ID', 'nationalId', 'Enter ID Number', true)}
+                  {renderInput('Passport no.', 'passportNo', '', true)}
+                  {renderInput('Place of Birth.', 'placeOfBirth', '', true)}
+                  {renderUploadField(
+                    'Upload National ID',
+                    'nationalIdUpload',
+                    true,
+                    nationalIdUploadError,
+                    '.jpg,.jpeg,.png,.pdf',
+                    isValidatingNationalIdUpload
+                  )}
+                  {renderInput('Mobile Number', 'mobileNumber', '')}
+                  {renderUploadField('Upload Tax Pin certificate', 'taxPinUpload', true)}
+                </div>
 
-                  {/* National ID */}
-                  <div>
-                    <label className="block text-[13.1px] text-[#364153] mb-2">
-                      National ID <span className="text-[#fb2c36]">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Enter ID Number"
-                      value={formData.nationalId}
-                      onChange={(e) => handleInputChange('nationalId', e.target.value)}
-                      className="w-full px-[13px] py-[9px] border border-[#d1d5dc] rounded-[8px] text-[15px] focus:outline-none focus:ring-2 focus:ring-[#dc0032] focus:border-transparent"
-                    />
-                  </div>
-
-                  {/* Passport No */}
-                  <div>
-                    <label className="block text-[13.1px] text-[#364153] mb-2">
-                      Passport no. <span className="text-[#fb2c36]">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Enter passport number"
-                      value={formData.passportNo}
-                      onChange={(e) => handleInputChange('passportNo', e.target.value)}
-                      className="w-full px-[13px] py-[9px] border border-[#d1d5dc] rounded-[8px] text-[15px] focus:outline-none focus:ring-2 focus:ring-[#dc0032] focus:border-transparent"
-                    />
-                  </div>
-
-                  {/* Place of Birth */}
-                  <div className="col-span-2">
-                    <label className="block text-[13.1px] text-[#364153] mb-2">
-                      Place of Birth. <span className="text-[#fb2c36]">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Enter place of birth"
-                      value={formData.placeOfBirth}
-                      onChange={(e) => handleInputChange('placeOfBirth', e.target.value)}
-                      className="w-full px-[13px] py-[9px] border border-[#d1d5dc] rounded-[8px] text-[15px] focus:outline-none focus:ring-2 focus:ring-[#dc0032] focus:border-transparent"
-                    />
-                  </div>
+                <h3 className="mb-4 mt-4 text-[26px] font-bold leading-[1.1] text-[#364153]">Address Details</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  {renderInput('Physical address', 'physicalAddress')}
+                  {renderInput('Town/City', 'townCity')}
+                  {renderInput('PO Box', 'poBox')}
+                  {renderInput('Postal code', 'postalCode')}
+                  {renderInput('Email', 'email')}
+                  {renderUploadField('Upload proof of address', 'proofOfAddressUpload', true)}
                 </div>
               </div>
 
-              {/* Proceed Button */}
-              <div className="flex justify-end mt-6">
+              <div className="mt-4 flex justify-end">
                 <button
                   onClick={handleProceed}
-                  className="bg-[#f93f24] text-white px-6 py-3 rounded-[8px] font-medium hover:bg-[#e02d14] transition-colors flex items-center gap-2"
+                  disabled={isValidatingNationalIdUpload}
+                  className={`rounded-[8px] px-7 py-[11px] text-[16px] font-semibold text-white ${
+                    isValidatingNationalIdUpload ? 'cursor-not-allowed bg-[#f78b7b]' : 'bg-[#f93f24]'
+                  }`}
                 >
-                  Proceed
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M6 12L10 8L6 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
+                  {isValidatingNationalIdUpload ? 'Validating ID...' : 'Proceed'}
                 </button>
               </div>
             </>
           )}
 
           {currentStep === 2 && (
-            <EmploymentDetailsForm onBack={handleBack} onProceed={handleEmploymentProceed} />
+            <EmploymentDetailsForm
+              onBack={handleBack}
+              onProceed={handleEmploymentProceed}
+              initialData={employmentData ?? undefined}
+            />
           )}
 
           {currentStep === 3 && (
-            <BankingDetailsForm onBack={handleBack} onProceed={handleBankingProceed} />
+            <BankingDetailsForm
+              onBack={() => setCurrentStep(2)}
+              onProceed={handleBankingProceed}
+              initialData={bankingData ?? undefined}
+            />
           )}
 
           {currentStep === 4 && (
-            <div className="bg-white rounded-[10px] border border-[#e5e7eb] p-6">
-              <h2 className="text-lg font-bold text-[#101828] mb-4">Card Repayments</h2>
-              <p className="text-gray-600">Card repayments form will be implemented here...</p>
-              <div className="flex justify-between mt-6">
-                <button
-                  onClick={() => setCurrentStep(3)}
-                  className="bg-white border border-[#d1d5dc] text-[#364153] px-6 py-3 rounded-[8px] font-medium hover:bg-gray-50 transition-colors flex items-center gap-2"
-                >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M10 12L6 8L10 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                  Back
-                </button>
-                <button
-                  onClick={() => alert('Form completed!')}
-                  className="bg-[#f93f24] text-white px-6 py-3 rounded-[8px] font-medium hover:bg-[#e02d14] transition-colors flex items-center gap-2"
-                >
-                  Proceed
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M6 12L10 8L6 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </button>
-              </div>
-            </div>
+            <AdditionalCardholderForm
+              onBack={() => setCurrentStep(3)}
+              onProceed={handleAdditionalCardholderProceed}
+              initialData={additionalCardholderData ?? undefined}
+            />
           )}
+
+          {currentStep === 5 && (
+            <PaymentInfoForm
+              onBack={() => setCurrentStep(4)}
+              onProceed={handlePaymentInfoProceed}
+              initialData={paymentInfoData ?? undefined}
+            />
+          )}
+
+          {currentStep === 6 && (
+            <AgreementDeclarationForm
+              onBack={() => setCurrentStep(5)}
+              onSubmit={handleAgreementSubmit}
+              onClearAll={handleClearForm}
+              initialSignature={signatureDataUrl ?? undefined}
+              submitLabel={editingFromReview ? 'Save & return to review' : 'Submit Registration'}
+            />
+          )}
+
+          {currentStep === 7 && (
+            <ReviewPage
+              personalData={formData}
+              photoPreview={photoPreview}
+              employmentData={employmentData}
+              bankingData={bankingData}
+              additionalCardholderData={additionalCardholderData}
+              paymentInfoData={paymentInfoData}
+              signatureDataUrl={signatureDataUrl}
+              onEdit={handleEditSection}
+              onSubmit={handleFinalSubmit}
+            />
+          )}
+
+        </div>
+      </div>
+      </div>
+
+      <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-30">
+        <div className="pointer-events-auto">
+          <Footer />
         </div>
       </div>
     </div>
