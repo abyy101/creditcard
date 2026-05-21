@@ -65,6 +65,19 @@ await run(`
   )
 `);
 
+const ensureColumn = async (tableName, columnName, columnDefinition) => {
+  const columns = await all(`PRAGMA table_info(${tableName})`);
+  const hasColumn = columns.some((column) => column.name === columnName);
+  if (!hasColumn) {
+    await run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
+  }
+};
+
+await ensureColumn('applications', 'status', "TEXT NOT NULL DEFAULT 'Submitted'");
+await ensureColumn('applications', 'reviewed_at', 'TEXT');
+await ensureColumn('applications', 'reviewed_by', 'TEXT');
+await ensureColumn('applications', 'reviewer_notes', 'TEXT');
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
@@ -92,10 +105,10 @@ app.post('/api/applications', async (req, res) => {
     const result = await run(
       `
         INSERT INTO applications (
-          created_at, first_name, last_name, email, mobile_number, payload_json
-        ) VALUES (?, ?, ?, ?, ?, ?)
+          created_at, first_name, last_name, email, mobile_number, payload_json, status, reviewed_at, reviewed_by, reviewer_notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [createdAt, firstName, lastName, email, mobileNumber, JSON.stringify(payload)]
+      [createdAt, firstName, lastName, email, mobileNumber, JSON.stringify(payload), 'Submitted', null, null, null]
     );
 
     res.status(201).json({ id: result.lastID, createdAt });
@@ -109,7 +122,17 @@ app.get('/api/applications', async (_req, res) => {
   try {
     const rows = await all(
       `
-        SELECT id, created_at AS createdAt, first_name AS firstName, last_name AS lastName, email, mobile_number AS mobileNumber
+        SELECT
+          id,
+          created_at AS createdAt,
+          first_name AS firstName,
+          last_name AS lastName,
+          email,
+          mobile_number AS mobileNumber,
+          status,
+          reviewed_at AS reviewedAt,
+          reviewed_by AS reviewedBy,
+          reviewer_notes AS reviewerNotes
         FROM applications
         ORDER BY id DESC
       `
@@ -118,6 +141,106 @@ app.get('/api/applications', async (_req, res) => {
   } catch (error) {
     console.error('Failed to load applications:', error);
     res.status(500).json({ message: 'Failed to load applications.' });
+  }
+});
+
+app.get('/api/reviewer/applications', async (_req, res) => {
+  try {
+    const rows = await all(
+      `
+        SELECT
+          id,
+          created_at AS createdAt,
+          first_name AS firstName,
+          last_name AS lastName,
+          email,
+          mobile_number AS mobileNumber,
+          payload_json AS payloadJson,
+          status,
+          reviewed_at AS reviewedAt,
+          reviewed_by AS reviewedBy,
+          reviewer_notes AS reviewerNotes
+        FROM applications
+        ORDER BY id DESC
+      `
+    );
+
+    const applications = rows.map((row) => {
+      let payload = null;
+      try {
+        payload = row.payloadJson ? JSON.parse(row.payloadJson) : null;
+      } catch {
+        payload = null;
+      }
+      return {
+        id: row.id,
+        createdAt: row.createdAt,
+        firstName: row.firstName ?? '',
+        lastName: row.lastName ?? '',
+        email: row.email ?? '',
+        mobileNumber: row.mobileNumber ?? '',
+        status: row.status ?? 'Submitted',
+        reviewedAt: row.reviewedAt ?? null,
+        reviewedBy: row.reviewedBy ?? null,
+        reviewerNotes: row.reviewerNotes ?? '',
+        payload,
+      };
+    });
+
+    res.json(applications);
+  } catch (error) {
+    console.error('Failed to load reviewer applications:', error);
+    res.status(500).json({ message: 'Failed to load reviewer applications.' });
+  }
+});
+
+app.patch('/api/reviewer/applications/:id/status', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const nextStatusRaw = req.body?.status;
+    const reviewedByRaw = req.body?.reviewedBy;
+    const reviewerNotesRaw = req.body?.reviewerNotes;
+
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ message: 'Invalid application id.' });
+      return;
+    }
+
+    const allowedStatuses = new Set(['Submitted', 'In Review', 'Approved', 'Rejected']);
+    const nextStatus = typeof nextStatusRaw === 'string' ? nextStatusRaw.trim() : '';
+    if (!allowedStatuses.has(nextStatus)) {
+      res.status(400).json({ message: 'Invalid status.' });
+      return;
+    }
+
+    const reviewedBy = typeof reviewedByRaw === 'string' ? reviewedByRaw.trim() : '';
+    const reviewerNotes = typeof reviewerNotesRaw === 'string' ? reviewerNotesRaw.trim() : '';
+    const reviewedAt = new Date().toISOString();
+
+    const result = await run(
+      `
+        UPDATE applications
+        SET status = ?, reviewed_at = ?, reviewed_by = ?, reviewer_notes = ?
+        WHERE id = ?
+      `,
+      [nextStatus, reviewedAt, reviewedBy || null, reviewerNotes || null, id]
+    );
+
+    if (result.changes === 0) {
+      res.status(404).json({ message: 'Application not found.' });
+      return;
+    }
+
+    res.json({
+      id,
+      status: nextStatus,
+      reviewedAt,
+      reviewedBy: reviewedBy || null,
+      reviewerNotes: reviewerNotes || '',
+    });
+  } catch (error) {
+    console.error('Failed to update application status:', error);
+    res.status(500).json({ message: 'Failed to update application status.' });
   }
 });
 
@@ -268,7 +391,7 @@ app.get('/api/progress', async (req, res) => {
 
     const application = await get(
       `
-        SELECT id, created_at AS createdAt, first_name AS firstName, last_name AS lastName
+        SELECT id, created_at AS createdAt, first_name AS firstName, last_name AS lastName, status
         FROM applications
         WHERE mobile_number = ?
         ORDER BY id DESC
@@ -281,18 +404,41 @@ app.get('/api/progress', async (req, res) => {
       return;
     }
 
-    res.json({
-      applicationId: application.id,
-      applicantName: [application.firstName, application.lastName].filter(Boolean).join(' ').trim() || 'Applicant',
-      mobileNumber,
-      status: 'Submitted',
-      submittedAt: application.createdAt,
-      progress: [
+    const status = application.status ?? 'Submitted';
+    const progressByStatus = {
+      Submitted: [
         { stage: 'Application received', state: 'completed' },
         { stage: 'Document verification', state: 'in_progress' },
         { stage: 'Credit review', state: 'pending' },
         { stage: 'Final decision', state: 'pending' },
       ],
+      'In Review': [
+        { stage: 'Application received', state: 'completed' },
+        { stage: 'Document verification', state: 'completed' },
+        { stage: 'Credit review', state: 'in_progress' },
+        { stage: 'Final decision', state: 'pending' },
+      ],
+      Approved: [
+        { stage: 'Application received', state: 'completed' },
+        { stage: 'Document verification', state: 'completed' },
+        { stage: 'Credit review', state: 'completed' },
+        { stage: 'Final decision', state: 'completed' },
+      ],
+      Rejected: [
+        { stage: 'Application received', state: 'completed' },
+        { stage: 'Document verification', state: 'completed' },
+        { stage: 'Credit review', state: 'completed' },
+        { stage: 'Final decision', state: 'completed' },
+      ],
+    };
+
+    res.json({
+      applicationId: application.id,
+      applicantName: [application.firstName, application.lastName].filter(Boolean).join(' ').trim() || 'Applicant',
+      mobileNumber,
+      status,
+      submittedAt: application.createdAt,
+      progress: progressByStatus[status] || progressByStatus.Submitted,
     });
   } catch (error) {
     console.error('Failed to fetch progress:', error);

@@ -26,6 +26,7 @@ export interface EmploymentFormData {
   county: string;
   poBox2: string;
   postalCode: string;
+  employmentAttachments?: Record<string, { fileName: string; dataUrl: string; mimeType: string }>;
 }
 
 export const emptyEmploymentFormData: EmploymentFormData = {
@@ -54,6 +55,7 @@ export const emptyEmploymentFormData: EmploymentFormData = {
   county: '',
   poBox2: '',
   postalCode: '',
+  employmentAttachments: {},
 };
 
 interface EmploymentDetailsFormProps {
@@ -106,7 +108,11 @@ const getCardTypeFromMonthlySalary = (monthlySalary: number) => {
 };
 
 export default function EmploymentDetailsForm({ onBack, onProceed, initialData }: EmploymentDetailsFormProps) {
-  const [formData, setFormData] = useState<EmploymentFormData>(initialData ?? emptyEmploymentFormData);
+  const [formData, setFormData] = useState<EmploymentFormData>({
+    ...emptyEmploymentFormData,
+    ...(initialData ?? {}),
+    employmentAttachments: initialData?.employmentAttachments ?? {},
+  });
 
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -118,10 +124,35 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleDocumentUpload = (field: keyof EmploymentFormData, e: ChangeEvent<HTMLInputElement>) => {
+  const readFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Failed to read uploaded file.'));
+      reader.readAsDataURL(file);
+    });
+
+  const handleDocumentUpload = async (field: keyof EmploymentFormData, e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       handleInputChange(field, file.name);
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        if (!dataUrl) return;
+        setFormData((prev) => ({
+          ...prev,
+          employmentAttachments: {
+            ...(prev.employmentAttachments ?? {}),
+            [String(field)]: {
+              fileName: file.name,
+              dataUrl,
+              mimeType: file.type || 'application/octet-stream',
+            },
+          },
+        }));
+      } catch (_error) {
+        // Keep filename value even if preview conversion fails.
+      }
     }
   };
 
@@ -223,7 +254,9 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
         }}
         type="file"
         className="hidden"
-        onChange={(e) => handleDocumentUpload(field, e)}
+        onChange={(e) => {
+          void handleDocumentUpload(field, e);
+        }}
       />
     </div>
   );

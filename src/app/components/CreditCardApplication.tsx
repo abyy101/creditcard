@@ -70,6 +70,12 @@ interface ApplicationProgressView {
   progress: Array<{ stage: string; state: 'completed' | 'in_progress' | 'pending' }>;
 }
 
+interface UploadedDocument {
+  fileName: string;
+  dataUrl: string;
+  mimeType: string;
+}
+
 export default function CreditCardApplication() {
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState<FormData>(emptyPersonalDetails);
@@ -84,6 +90,7 @@ export default function CreditCardApplication() {
   const [editingFromReview, setEditingFromReview] = useState(false);
 
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [uploadedDocuments, setUploadedDocuments] = useState<Record<string, UploadedDocument>>({});
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [nationalIdUploadError, setNationalIdUploadError] = useState<string | null>(null);
   const [isNationalIdVerified, setIsNationalIdVerified] = useState(false);
@@ -239,6 +246,14 @@ export default function CreditCardApplication() {
     }
   };
 
+  const readFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Failed to read uploaded file.'));
+      reader.readAsDataURL(file);
+    });
+
   const handleDocumentUpload = async (field: keyof FormData, e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -261,6 +276,22 @@ export default function CreditCardApplication() {
 
         setNationalIdUploadError(null);
         setIsNationalIdVerified(true);
+      }
+      let dataUrl = '';
+      try {
+        dataUrl = await readFileAsDataUrl(file);
+      } catch (_error) {
+        dataUrl = '';
+      }
+      if (dataUrl) {
+        setUploadedDocuments((prev) => ({
+          ...prev,
+          [String(field)]: {
+            fileName: file.name,
+            dataUrl,
+            mimeType: file.type || 'application/octet-stream',
+          },
+        }));
       }
       handleInputChange(field, file.name);
     }
@@ -354,6 +385,7 @@ export default function CreditCardApplication() {
     setPaymentInfoData(null);
     setSignatureDataUrl(null);
     setPhotoPreview(null);
+    setUploadedDocuments({});
     setNationalIdUploadError(null);
     setIsNationalIdVerified(false);
     setIsValidatingNationalIdUpload(false);
@@ -440,6 +472,18 @@ export default function CreditCardApplication() {
       personalDetails: {
         ...personalDetailsWithoutFile,
         profilePhotoName: profilePhoto?.name ?? null,
+      },
+      attachments: {
+        profilePhoto:
+          profilePhoto && photoPreview
+            ? {
+                fileName: profilePhoto.name,
+                dataUrl: photoPreview,
+                mimeType: profilePhoto.type || 'image/jpeg',
+              }
+            : null,
+        personalDocuments: uploadedDocuments,
+        employmentDocuments: employmentData?.employmentAttachments ?? {},
       },
       photoPreview,
       employmentData,

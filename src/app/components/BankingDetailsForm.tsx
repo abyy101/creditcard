@@ -93,11 +93,13 @@ export default function BankingDetailsForm({ onBack, onProceed, initialData }: B
       return;
     }
 
-    const hasIncompleteCommitment = formData.loanCommitments.some(
-      (loan) => !loan.bank.trim() || !loan.outstandingAmount.trim() || !loan.monthlyRepayment.trim()
-    );
+    const hasIncompleteCommitment = formData.loanCommitments.some((loan) => {
+      const hasAnyField = loan.bank.trim() || loan.outstandingAmount.trim() || loan.monthlyRepayment.trim();
+      if (!hasAnyField) return false;
+      return !loan.bank.trim() || !loan.outstandingAmount.trim() || !loan.monthlyRepayment.trim();
+    });
     if (hasIncompleteCommitment) {
-      alert('Please complete bank, outstanding amount/credit limit, and monthly repayment for each commitment row.');
+      alert('If you add a commitment row, please complete bank, outstanding amount/credit limit, and monthly repayment.');
       return;
     }
 
@@ -147,7 +149,7 @@ export default function BankingDetailsForm({ onBack, onProceed, initialData }: B
               />
             </div>
             <div>
-              <label className={labelClass}>Length of time with Bank</label>
+              <label className={labelClass}>Length of time with Bank (months)</label>
               <input
                 type="text"
                 placeholder=""
