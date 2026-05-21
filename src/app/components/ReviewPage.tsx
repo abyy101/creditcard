@@ -36,6 +36,7 @@ interface ReviewPageProps {
   signatureDataUrl: string | null;
   onEdit: (step: number) => void;
   onSubmit: () => void;
+  isSubmitting?: boolean;
 }
 
 const placeholder = '—';
@@ -108,6 +109,7 @@ export default function ReviewPage({
   signatureDataUrl,
   onEdit,
   onSubmit,
+  isSubmitting = false,
 }: ReviewPageProps) {
   return (
     <>
@@ -382,9 +384,12 @@ export default function ReviewPage({
         <button
           type="button"
           onClick={onSubmit}
-          className="flex items-center gap-2 rounded-[8px] bg-[#f93f24] px-7 py-[11px] text-[16px] font-semibold text-white hover:bg-[#e02d14]"
+          disabled={isSubmitting}
+          className={`flex items-center gap-2 rounded-[8px] px-7 py-[11px] text-[16px] font-semibold text-white ${
+            isSubmitting ? 'cursor-not-allowed bg-[#f78b7b]' : 'bg-[#f93f24] hover:bg-[#e02d14]'
+          }`}
         >
-          Submit Application
+          {isSubmitting ? 'Submitting...' : 'Submit Application'}
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
             <path d="M3 8L7 12L13 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>

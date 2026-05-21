@@ -39,6 +39,8 @@ interface BankingDetailsFormProps {
 
 const inputClassName =
   'h-[42px] w-full rounded-[8px] border border-[#d1d5dc] px-[13px] text-[15px] leading-[24px] text-[#0a0a0a] placeholder:text-[rgba(10,10,10,0.5)] focus:outline-none focus:ring-1 focus:ring-[#dc0032]';
+const selectClassName =
+  'h-[42px] w-full rounded-[8px] border border-[#d1d5dc] bg-white px-[13px] text-[15px] text-[#0a0a0a] focus:outline-none focus:ring-1 focus:ring-[#dc0032]';
 
 const labelClass = 'mb-2 block text-[14px] font-medium text-[#364153]';
 
@@ -78,6 +80,27 @@ export default function BankingDetailsForm({ onBack, onProceed, initialData }: B
   };
 
   const handleProceed = () => {
+    const requiredTopLevel: Array<keyof BankingFormData> = [
+      'bank',
+      'accountName',
+      'accountNumber',
+      'preferredCard',
+      'debtServiceRatio',
+    ];
+    const missingTopLevel = requiredTopLevel.find((field) => !String(formData[field] ?? '').trim());
+    if (missingTopLevel) {
+      alert('Please complete all required banking details fields.');
+      return;
+    }
+
+    const hasIncompleteCommitment = formData.loanCommitments.some(
+      (loan) => !loan.bank.trim() || !loan.outstandingAmount.trim() || !loan.monthlyRepayment.trim()
+    );
+    if (hasIncompleteCommitment) {
+      alert('Please complete bank, outstanding amount/credit limit, and monthly repayment for each commitment row.');
+      return;
+    }
+
     console.log('Banking Form Data:', formData);
     onProceed(formData);
   };
@@ -100,7 +123,9 @@ export default function BankingDetailsForm({ onBack, onProceed, initialData }: B
           <h3 className="mb-4 text-[14px] font-semibold leading-[1.2] text-[#364153]">Card repayments</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className={labelClass}>Bank</label>
+              <label className={labelClass}>
+                Bank <span className="text-[#fb2c36]">*</span>
+              </label>
               <input
                 type="text"
                 placeholder=""
@@ -110,7 +135,9 @@ export default function BankingDetailsForm({ onBack, onProceed, initialData }: B
               />
             </div>
             <div>
-              <label className={labelClass}>Account name</label>
+              <label className={labelClass}>
+                Account name <span className="text-[#fb2c36]">*</span>
+              </label>
               <input
                 type="text"
                 placeholder=""
@@ -130,7 +157,9 @@ export default function BankingDetailsForm({ onBack, onProceed, initialData }: B
               />
             </div>
             <div>
-              <label className={labelClass}>Account number</label>
+              <label className={labelClass}>
+                Account number <span className="text-[#fb2c36]">*</span>
+              </label>
               <input
                 type="text"
                 placeholder=""
@@ -145,7 +174,9 @@ export default function BankingDetailsForm({ onBack, onProceed, initialData }: B
         <div className="mb-6">
           <h3 className="mb-4 text-[14px] font-semibold leading-[1.2] text-[#364153]">Card preference</h3>
           <div className="mb-4 w-full md:max-w-[calc(50%-0.5rem)]">
-            <label className={labelClass}>Preferred Card</label>
+            <label className={labelClass}>
+              Preferred Card <span className="text-[#fb2c36]">*</span>
+            </label>
             <input
               type="text"
               placeholder=""
@@ -157,23 +188,27 @@ export default function BankingDetailsForm({ onBack, onProceed, initialData }: B
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={labelClass}>Payment insurance</label>
-              <input
-                type="text"
-                placeholder=""
+              <select
                 value={formData.paymentInsurance}
                 onChange={(e) => handleInputChange('paymentInsurance', e.target.value)}
-                className={inputClassName}
-              />
+                className={selectClassName}
+              >
+                <option value="">Select option</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
             </div>
             <div>
               <label className={labelClass}>I would like Credit Shield Insurance protection</label>
-              <input
-                type="text"
-                placeholder=""
+              <select
                 value={formData.creditShieldInsurance}
                 onChange={(e) => handleInputChange('creditShieldInsurance', e.target.value)}
-                className={inputClassName}
-              />
+                className={selectClassName}
+              >
+                <option value="">Select option</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
             </div>
           </div>
         </div>
@@ -188,7 +223,9 @@ export default function BankingDetailsForm({ onBack, onProceed, initialData }: B
               className={`grid grid-cols-1 gap-4 md:grid-cols-[1fr_1.15fr_1fr_auto] md:items-end ${index < formData.loanCommitments.length - 1 ? 'mb-4 border-b border-[#e5e7eb] pb-4' : ''}`}
             >
               <div>
-                <label className={labelClass}>Bank</label>
+                <label className={labelClass}>
+                  Bank <span className="text-[#fb2c36]">*</span>
+                </label>
                 <input
                   type="text"
                   placeholder=""
@@ -198,7 +235,9 @@ export default function BankingDetailsForm({ onBack, onProceed, initialData }: B
                 />
               </div>
               <div>
-                <label className={labelClass}>Outstanding amount/Credit limit</label>
+                <label className={labelClass}>
+                  Outstanding amount/Credit limit <span className="text-[#fb2c36]">*</span>
+                </label>
                 <input
                   type="text"
                   placeholder=""
@@ -208,7 +247,9 @@ export default function BankingDetailsForm({ onBack, onProceed, initialData }: B
                 />
               </div>
               <div>
-                <label className={labelClass}>Monthly repayment</label>
+                <label className={labelClass}>
+                  Monthly repayment <span className="text-[#fb2c36]">*</span>
+                </label>
                 <input
                   type="text"
                   placeholder=""
@@ -247,14 +288,22 @@ export default function BankingDetailsForm({ onBack, onProceed, initialData }: B
           </button>
 
           <div className="mt-4 max-w-[260px]">
-            <label className={labelClass}>Debt Service Ratio</label>
-            <input
-              type="text"
-              placeholder=""
-              value={formData.debtServiceRatio}
-              onChange={(e) => handleInputChange('debtServiceRatio', e.target.value)}
-              className={inputClassName}
-            />
+            <label className={labelClass}>
+              Debt Service Ratio (%) <span className="text-[#fb2c36]">*</span>
+            </label>
+            <div className="relative">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                placeholder="e.g. 35"
+                value={formData.debtServiceRatio}
+                onChange={(e) => handleInputChange('debtServiceRatio', e.target.value)}
+                className={`${inputClassName} pr-8`}
+              />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[14px] text-[#6b7280]">%</span>
+            </div>
           </div>
         </div>
       </div>

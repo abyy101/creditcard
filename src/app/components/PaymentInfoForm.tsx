@@ -10,8 +10,13 @@ export interface PaymentInfoFormData {
   relative2IdPassport: string;
   relative2PostalAddress: string;
   paymentOption: string;
+  autoDebitHowMuchPercent: string;
+  nonAbsaBankName: string;
+  nonAbsaAccountName: string;
+  nonAbsaAccountNumber: string;
   deliveryMethod: string;
   frequencyOfDeduction: string;
+  paymentDate: string;
   statementMergeVia: string;
 }
 
@@ -25,8 +30,13 @@ export const emptyPaymentInfoFormData: PaymentInfoFormData = {
   relative2IdPassport: '',
   relative2PostalAddress: '',
   paymentOption: '',
+  autoDebitHowMuchPercent: '',
+  nonAbsaBankName: '',
+  nonAbsaAccountName: '',
+  nonAbsaAccountNumber: '',
   deliveryMethod: '',
   frequencyOfDeduction: '',
+  paymentDate: '',
   statementMergeVia: '',
 };
 
@@ -38,17 +48,63 @@ interface PaymentInfoFormProps {
 
 const inputClassName =
   'h-[42px] w-full rounded-[8px] border border-[#d1d5dc] px-[13px] text-[15px] leading-[24px] text-[#0a0a0a] placeholder:text-[rgba(10,10,10,0.5)] focus:outline-none focus:ring-1 focus:ring-[#dc0032]';
+const selectClassName = `${inputClassName} bg-white`;
 
 const labelClass = 'mb-2 block text-[14px] font-medium text-[#364153]';
 
 export default function PaymentInfoForm({ onBack, onProceed, initialData }: PaymentInfoFormProps) {
   const [formData, setFormData] = useState<PaymentInfoFormData>(initialData ?? emptyPaymentInfoFormData);
+  const isAbsaAutoDebit = formData.paymentOption === 'auto-debit-absa-customer';
+  const isNonAbsaCustomer = formData.paymentOption === 'non-absa-customer';
 
   const handleInputChange = (field: keyof PaymentInfoFormData, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
   const handleProceed = () => {
+    const requiredPrimaryReferee: Array<keyof PaymentInfoFormData> = [
+      'refereeName',
+      'refereeRelationship',
+      'refereeIdPassport',
+      'refereePostalAddress',
+      'paymentOption',
+      'deliveryMethod',
+      'frequencyOfDeduction',
+      'paymentDate',
+      'statementMergeVia',
+    ];
+    const missingPrimary = requiredPrimaryReferee.find((field) => !String(formData[field] ?? '').trim());
+    if (missingPrimary) {
+      alert('Please complete all required referee and payment information fields.');
+      return;
+    }
+
+    const relative2Fields: Array<keyof PaymentInfoFormData> = [
+      'relative2Name',
+      'relative2Relationship',
+      'relative2IdPassport',
+      'relative2PostalAddress',
+    ];
+    const hasAnyRelative2Data = relative2Fields.some((field) => String(formData[field] ?? '').trim());
+    const hasMissingRelative2Data = relative2Fields.some((field) => !String(formData[field] ?? '').trim());
+    if (hasAnyRelative2Data && hasMissingRelative2Data) {
+      alert('If Relative 2 is provided, please complete all Relative 2 fields.');
+      return;
+    }
+
+    if (isAbsaAutoDebit && !formData.autoDebitHowMuchPercent.trim()) {
+      alert('Please provide How much (%) for Auto-Debit (Absa customer).');
+      return;
+    }
+
+    if (
+      isNonAbsaCustomer &&
+      (!formData.nonAbsaBankName.trim() || !formData.nonAbsaAccountName.trim() || !formData.nonAbsaAccountNumber.trim())
+    ) {
+      alert('Please provide Bank Name, Account Name, and Account Number for Non-absa customer.');
+      return;
+    }
+
     console.log('Payment Info Data:', formData);
     onProceed(formData);
   };
@@ -87,7 +143,9 @@ export default function PaymentInfoForm({ onBack, onProceed, initialData }: Paym
           <h3 className="mb-4 text-[14px] font-semibold leading-[1.2] text-[#101828]">Referees</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className={labelClass}>Name</label>
+              <label className={labelClass}>
+                Name <span className="text-[#fb2c36]">*</span>
+              </label>
               <input
                 type="text"
                 placeholder=""
@@ -97,7 +155,9 @@ export default function PaymentInfoForm({ onBack, onProceed, initialData }: Paym
               />
             </div>
             <div>
-              <label className={labelClass}>Relationship to Applicant</label>
+              <label className={labelClass}>
+                Relationship to Applicant <span className="text-[#fb2c36]">*</span>
+              </label>
               <input
                 type="text"
                 placeholder=""
@@ -107,7 +167,9 @@ export default function PaymentInfoForm({ onBack, onProceed, initialData }: Paym
               />
             </div>
             <div>
-              <label className={labelClass}>ID/Passport no</label>
+              <label className={labelClass}>
+                ID/Passport no <span className="text-[#fb2c36]">*</span>
+              </label>
               <input
                 type="text"
                 placeholder=""
@@ -117,7 +179,9 @@ export default function PaymentInfoForm({ onBack, onProceed, initialData }: Paym
               />
             </div>
             <div>
-              <label className={labelClass}>Postal address</label>
+              <label className={labelClass}>
+                Postal address <span className="text-[#fb2c36]">*</span>
+              </label>
               <input
                 type="text"
                 placeholder=""
@@ -179,24 +243,37 @@ export default function PaymentInfoForm({ onBack, onProceed, initialData }: Paym
           </h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className={labelClass}>Payment option</label>
+              <label className={labelClass}>
+                Payment option <span className="text-[#fb2c36]">*</span>
+              </label>
               <select
                 value={formData.paymentOption}
-                onChange={(e) => handleInputChange('paymentOption', e.target.value)}
-                className={`${inputClassName} ${formData.paymentOption ? 'text-[#0a0a0a]' : 'text-[rgba(10,10,10,0.5)]'}`}
+                onChange={(e) => {
+                  const selected = e.target.value;
+                  setFormData((prev) => ({
+                    ...prev,
+                    paymentOption: selected,
+                    autoDebitHowMuchPercent: selected === 'auto-debit-absa-customer' ? prev.autoDebitHowMuchPercent : '',
+                    nonAbsaBankName: selected === 'non-absa-customer' ? prev.nonAbsaBankName : '',
+                    nonAbsaAccountName: selected === 'non-absa-customer' ? prev.nonAbsaAccountName : '',
+                    nonAbsaAccountNumber: selected === 'non-absa-customer' ? prev.nonAbsaAccountNumber : '',
+                  }));
+                }}
+                className={`${selectClassName} ${formData.paymentOption ? 'text-[#0a0a0a]' : 'text-[rgba(10,10,10,0.5)]'}`}
               >
                 <option value="">Select payment option</option>
-                <option value="auto-credit">Auto-credit</option>
-                <option value="direct-debit">Direct debit</option>
-                <option value="standing-order">Standing order</option>
+                <option value="auto-debit-absa-customer">Auto-Debit (Absa customer)</option>
+                <option value="non-absa-customer">Non-absa customer</option>
               </select>
             </div>
             <div>
-              <label className={labelClass}>Delivery method</label>
+              <label className={labelClass}>
+                Delivery method <span className="text-[#fb2c36]">*</span>
+              </label>
               <select
                 value={formData.deliveryMethod}
                 onChange={(e) => handleInputChange('deliveryMethod', e.target.value)}
-                className={`${inputClassName} ${formData.deliveryMethod ? 'text-[#0a0a0a]' : 'text-[rgba(10,10,10,0.5)]'}`}
+                className={`${selectClassName} ${formData.deliveryMethod ? 'text-[#0a0a0a]' : 'text-[rgba(10,10,10,0.5)]'}`}
               >
                 <option value="">Select delivery option</option>
                 <option value="branch">Branch pickup</option>
@@ -205,21 +282,45 @@ export default function PaymentInfoForm({ onBack, onProceed, initialData }: Paym
               </select>
             </div>
             <div>
-              <label className={labelClass}>Frequency of deduction</label>
-              <input
-                type="text"
-                placeholder=""
+              <label className={labelClass}>
+                Frequency of deduction <span className="text-[#fb2c36]">*</span>
+              </label>
+              <select
                 value={formData.frequencyOfDeduction}
                 onChange={(e) => handleInputChange('frequencyOfDeduction', e.target.value)}
-                className={inputClassName}
-              />
+                className={`${selectClassName} ${formData.frequencyOfDeduction ? 'text-[#0a0a0a]' : 'text-[rgba(10,10,10,0.5)]'}`}
+              >
+                <option value="">Select frequency</option>
+                <option value="Monthly">Monthly</option>
+                <option value="Annually">Annually</option>
+              </select>
             </div>
             <div>
-              <label className={labelClass}>Please merge my statements via:</label>
+              <label className={labelClass}>
+                Payment date <span className="text-[#fb2c36]">*</span>
+              </label>
+              <select
+                value={formData.paymentDate}
+                onChange={(e) => handleInputChange('paymentDate', e.target.value)}
+                className={`${selectClassName} ${formData.paymentDate ? 'text-[#0a0a0a]' : 'text-[rgba(10,10,10,0.5)]'}`}
+              >
+                <option value="">Select payment date</option>
+                <option value="5th">5th</option>
+                <option value="8th">8th</option>
+                <option value="14th">14th</option>
+                <option value="23rd">23rd</option>
+                <option value="28th">28th</option>
+                <option value="30th">30th</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>
+                Please merge my statements via: <span className="text-[#fb2c36]">*</span>
+              </label>
               <select
                 value={formData.statementMergeVia}
                 onChange={(e) => handleInputChange('statementMergeVia', e.target.value)}
-                className={`${inputClassName} ${formData.statementMergeVia ? 'text-[#0a0a0a]' : 'text-[rgba(10,10,10,0.5)]'}`}
+                className={`${selectClassName} ${formData.statementMergeVia ? 'text-[#0a0a0a]' : 'text-[rgba(10,10,10,0.5)]'}`}
               >
                 <option value="">Select option</option>
                 <option value="email">Email</option>
@@ -227,6 +328,65 @@ export default function PaymentInfoForm({ onBack, onProceed, initialData }: Paym
                 <option value="sms">SMS</option>
               </select>
             </div>
+
+            {isAbsaAutoDebit && (
+              <div>
+                <label className={labelClass}>
+                  How much (%) <span className="text-[#fb2c36]">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    placeholder="e.g. 20"
+                    value={formData.autoDebitHowMuchPercent}
+                    onChange={(e) => handleInputChange('autoDebitHowMuchPercent', e.target.value)}
+                    className={`${inputClassName} pr-8`}
+                  />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[14px] text-[#6b7280]">%</span>
+                </div>
+              </div>
+            )}
+
+            {isNonAbsaCustomer && (
+              <>
+                <div>
+                  <label className={labelClass}>
+                    Bank Name <span className="text-[#fb2c36]">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.nonAbsaBankName}
+                    onChange={(e) => handleInputChange('nonAbsaBankName', e.target.value)}
+                    className={inputClassName}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>
+                    Account Name <span className="text-[#fb2c36]">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.nonAbsaAccountName}
+                    onChange={(e) => handleInputChange('nonAbsaAccountName', e.target.value)}
+                    className={inputClassName}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>
+                    Account Number <span className="text-[#fb2c36]">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.nonAbsaAccountNumber}
+                    onChange={(e) => handleInputChange('nonAbsaAccountNumber', e.target.value)}
+                    className={inputClassName}
+                  />
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>

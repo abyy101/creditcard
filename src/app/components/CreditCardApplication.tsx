@@ -42,6 +42,33 @@ const KENYAN_ID_ALLOWED_MIME_TYPES = new Set([
 const KENYAN_ID_NUMBER_IN_TEXT_REGEX = /\b\d{7,8}\b/;
 const MAX_ID_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024;
 const OCR_MAX_IMAGE_EDGE = 1400;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MOBILE_REGEX = /^[+\d][\d\s-]{7,}$/;
+const KENYAN_LOCATION_SUGGESTIONS = [
+  'Nairobi',
+  'Mombasa',
+  'Kisumu',
+  'Nakuru',
+  'Eldoret',
+  'Thika',
+  'Kitengela',
+  'Machakos',
+  'Kiambu',
+  'Nyeri',
+  'Meru',
+  'Kakamega',
+];
+
+type TrackingStage = 'none' | 'mobile' | 'otp' | 'progress';
+
+interface ApplicationProgressView {
+  applicationId: number;
+  applicantName: string;
+  mobileNumber: string;
+  status: string;
+  submittedAt: string;
+  progress: Array<{ stage: string; state: 'completed' | 'in_progress' | 'pending' }>;
+}
 
 export default function CreditCardApplication() {
   const [currentStep, setCurrentStep] = useState(1);
@@ -52,6 +79,7 @@ export default function CreditCardApplication() {
   const [additionalCardholderData, setAdditionalCardholderData] = useState<AdditionalCardholderFormData | null>(null);
   const [paymentInfoData, setPaymentInfoData] = useState<PaymentInfoFormData | null>(null);
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
+  const [isSubmittingApplication, setIsSubmittingApplication] = useState(false);
 
   const [editingFromReview, setEditingFromReview] = useState(false);
 
@@ -60,6 +88,13 @@ export default function CreditCardApplication() {
   const [nationalIdUploadError, setNationalIdUploadError] = useState<string | null>(null);
   const [isNationalIdVerified, setIsNationalIdVerified] = useState(false);
   const [isValidatingNationalIdUpload, setIsValidatingNationalIdUpload] = useState(false);
+  const [trackingStage, setTrackingStage] = useState<TrackingStage>('none');
+  const [trackingMobileNumber, setTrackingMobileNumber] = useState('');
+  const [trackingOtp, setTrackingOtp] = useState('');
+  const [trackingError, setTrackingError] = useState<string | null>(null);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [applicationProgress, setApplicationProgress] = useState<ApplicationProgressView | null>(null);
 
   const goNextOrReview = (defaultNext: number) => {
     if (editingFromReview) {
@@ -232,6 +267,30 @@ export default function CreditCardApplication() {
   };
 
   const handleProceed = () => {
+    const requiredPersonalFields: Array<keyof FormData> = [
+      'firstName',
+      'lastName',
+      'dateOfBirth',
+      'gender',
+      'nationality',
+      'maritalStatus',
+      'nationalId',
+      'mobileNumber',
+      'physicalAddress',
+      'townCity',
+      'email',
+    ];
+    const missingField = requiredPersonalFields.find((field) => !String(formData[field] ?? '').trim());
+    if (missingField) {
+      alert('Please complete all required personal details fields.');
+      return;
+    }
+
+    if (!EMAIL_REGEX.test(formData.email.trim())) {
+      alert('Please enter a valid email address containing @.');
+      return;
+    }
+
     if (!formData.nationalIdUpload) {
       setNationalIdUploadError('Please upload a valid Kenyan ID document.');
       setIsNationalIdVerified(false);
@@ -298,21 +357,124 @@ export default function CreditCardApplication() {
     setNationalIdUploadError(null);
     setIsNationalIdVerified(false);
     setIsValidatingNationalIdUpload(false);
+    setTrackingStage('none');
+    setTrackingMobileNumber('');
+    setTrackingOtp('');
+    setTrackingError(null);
+    setApplicationProgress(null);
     setEditingFromReview(false);
     setCurrentStep(1);
   };
 
-  const handleFinalSubmit = () => {
-    console.log('Final Application Payload:', {
-      personalDetails: formData,
+  const handleSendTrackingOtp = async () => {
+    const mobile = trackingMobileNumber.trim();
+    if (!MOBILE_REGEX.test(mobile)) {
+      setTrackingError('Enter a valid mobile number.');
+      return;
+    }
+
+    try {
+      setIsSendingOtp(true);
+      setTrackingError(null);
+      const response = await fetch('/api/progress/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobileNumber: mobile }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result?.message || `Request failed with status ${response.status}`);
+      }
+
+      setTrackingOtp('');
+      setTrackingStage('otp');
+    } catch (error) {
+      setTrackingError(error instanceof Error ? error.message : 'Failed to send OTP.');
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleVerifyTrackingOtp = async () => {
+    const mobile = trackingMobileNumber.trim();
+    const otp = trackingOtp.trim();
+    if (!otp) {
+      setTrackingError('Please enter the OTP sent to your mobile number.');
+      return;
+    }
+
+    try {
+      setIsVerifyingOtp(true);
+      setTrackingError(null);
+
+      const verifyResponse = await fetch('/api/progress/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobileNumber: mobile, otp }),
+      });
+      const verifyResult = await verifyResponse.json();
+      if (!verifyResponse.ok) {
+        throw new Error(verifyResult?.message || `Request failed with status ${verifyResponse.status}`);
+      }
+
+      const progressResponse = await fetch(`/api/progress?mobileNumber=${encodeURIComponent(mobile)}`);
+      const progressResult = await progressResponse.json();
+      if (!progressResponse.ok) {
+        throw new Error(progressResult?.message || `Request failed with status ${progressResponse.status}`);
+      }
+
+      setApplicationProgress(progressResult as ApplicationProgressView);
+      setTrackingStage('progress');
+    } catch (error) {
+      setTrackingError(error instanceof Error ? error.message : 'Failed to verify OTP.');
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  };
+
+  const handleFinalSubmit = async () => {
+    if (isSubmittingApplication) return;
+
+    const { profilePhoto, ...personalDetailsWithoutFile } = formData;
+    const payload = {
+      personalDetails: {
+        ...personalDetailsWithoutFile,
+        profilePhotoName: profilePhoto?.name ?? null,
+      },
       photoPreview,
       employmentData,
       bankingData,
       additionalCardholderData,
       paymentInfoData,
       signatureDataUrl,
-    });
-    alert('Application submitted! (Wire this up to your backend.)');
+      submittedAt: new Date().toISOString(),
+    };
+
+    try {
+      setIsSubmittingApplication(true);
+      const response = await fetch('/api/applications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log('Saved application:', result);
+      setTrackingMobileNumber(formData.mobileNumber || '');
+      setTrackingOtp('');
+      setTrackingError(null);
+      setApplicationProgress(null);
+      setTrackingStage('mobile');
+    } catch (error) {
+      console.error('Failed to save application:', error);
+      alert('Failed to save application to database. Please try again.');
+    } finally {
+      setIsSubmittingApplication(false);
+    }
   };
 
   const steps = [
@@ -329,7 +491,9 @@ export default function CreditCardApplication() {
     field: keyof FormData,
     placeholder?: string,
     required = false,
-    type: 'text' | 'date' = 'text'
+    type: 'text' | 'date' | 'email' = 'text',
+    listId?: string,
+    suggestions: string[] = []
   ) => (
     <div>
       <label className="mb-2 block text-[14px] font-medium text-[#364153]">
@@ -337,11 +501,19 @@ export default function CreditCardApplication() {
       </label>
       <input
         type={type}
+        list={listId}
         placeholder={placeholder}
         value={String(formData[field] ?? '')}
         onChange={(e) => handleInputChange(field, e.target.value)}
         className="h-[42px] w-full rounded-[8px] border border-[#d1d5dc] px-[13px] text-[15px] leading-[24px] text-[#0a0a0a] placeholder:text-[rgba(10,10,10,0.5)] focus:outline-none focus:ring-1 focus:ring-[#dc0032]"
       />
+      {listId && suggestions.length > 0 && (
+        <datalist id={listId}>
+          {suggestions.map((item) => (
+            <option key={item} value={item} />
+          ))}
+        </datalist>
+      )}
     </div>
   );
 
@@ -442,6 +614,7 @@ export default function CreditCardApplication() {
   const month = String(today.getMonth() + 1).padStart(2, '0');
   const year = today.getFullYear();
   const currentDateLabel = `${weekday}, ${day}.${month}.${year}`;
+  const isTrackingFlow = trackingStage !== 'none';
 
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-[#f5f5f5] font-['Source_Sans_3','Roboto',Arial,sans-serif]">
@@ -464,41 +637,43 @@ export default function CreditCardApplication() {
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="mx-auto flex h-full min-h-0 w-[96%] max-w-[1460px] items-start gap-10 pt-8">
-          <aside className="sticky top-0 w-[300px] shrink-0 self-start pt-12">
-            <ol className="relative border-s-2 border-[#e5e7eb] text-[#4b5563]">
-              {steps.map((step, index) => {
-                const isActive = currentStep === step.number;
-                const isCompleted = step.completed;
-                const stepSpacing = index === steps.length - 1 ? '' : 'mb-17';
+          {!isTrackingFlow && (
+            <aside className="sticky top-0 w-[300px] shrink-0 self-start pt-12">
+              <ol className="relative border-s-2 border-[#e5e7eb] text-[#4b5563]">
+                {steps.map((step, index) => {
+                  const isActive = currentStep === step.number;
+                  const isCompleted = step.completed;
+                  const stepSpacing = index === steps.length - 1 ? '' : 'mb-17';
 
-                return (
-                  <li key={step.number} className={`ms-7 ${stepSpacing}`}>
-                    <span
-                      className={`absolute -start-[17px] flex h-8 w-8 items-center justify-center rounded-full ring-4 ring-[#f5f5f5] ${
-                        isCompleted
-                          ? 'bg-[#dc0032] text-white'
-                          : isActive
-                            ? 'bg-[#f3f4f6] text-[#4b5563]'
-                            : 'bg-[#f3f4f6] text-[#6b7280]'
-                      }`}
-                    >
-                      {isCompleted ? (
-                        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none">
-                          <path d="M5 12L10 17L19 8" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      ) : (
-                        renderStepIcon(step.number)
-                      )}
-                    </span>
-                    <h3 className={`leading-tight ${isActive || isCompleted ? 'text-[#1f3b5b]' : 'text-[#334155]'} text-[19px] font-medium`}>
-                      {step.name}
-                    </h3>
-                    <p className="text-[14px] text-[#64748b]">{step.description}</p>
-                  </li>
-                );
-              })}
-            </ol>
-          </aside>
+                  return (
+                    <li key={step.number} className={`ms-7 ${stepSpacing}`}>
+                      <span
+                        className={`absolute -start-[17px] flex h-8 w-8 items-center justify-center rounded-full ring-4 ring-[#f5f5f5] ${
+                          isCompleted
+                            ? 'bg-[#dc0032] text-white'
+                            : isActive
+                              ? 'bg-[#f3f4f6] text-[#4b5563]'
+                              : 'bg-[#f3f4f6] text-[#6b7280]'
+                        }`}
+                      >
+                        {isCompleted ? (
+                          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none">
+                            <path d="M5 12L10 17L19 8" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        ) : (
+                          renderStepIcon(step.number)
+                        )}
+                      </span>
+                      <h3 className={`leading-tight ${isActive || isCompleted ? 'text-[#1f3b5b]' : 'text-[#334155]'} text-[19px] font-medium`}>
+                        {step.name}
+                      </h3>
+                      <p className="text-[14px] text-[#64748b]">{step.description}</p>
+                    </li>
+                  );
+                })}
+              </ol>
+            </aside>
+          )}
 
         <div className="h-full min-h-0 flex-1 overflow-y-auto pb-20 pr-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="mb-6 flex justify-between">
@@ -506,6 +681,148 @@ export default function CreditCardApplication() {
             <div className="pt-4 text-[11px] text-[#2d2323]">{currentDateLabel}</div>
           </div>
 
+          {isTrackingFlow ? (
+            <div className="mx-auto max-w-[760px]">
+              {trackingStage === 'mobile' && (
+                <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-[25px] shadow-[0px_2px_4px_rgba(16,24,40,0.14)]">
+                  <h2 className="mb-2 text-[24px] font-bold text-[#101828]">Track your application</h2>
+                  <p className="mb-5 text-[14px] text-[#4b5563]">
+                    Enter your mobile number to receive an OTP and view your application progress.
+                  </p>
+                  <div>
+                    <label className="mb-2 block text-[14px] font-medium text-[#364153]">Mobile number</label>
+                    <input
+                      type="text"
+                      value={trackingMobileNumber}
+                      onChange={(e) => {
+                        setTrackingMobileNumber(e.target.value);
+                        setTrackingError(null);
+                      }}
+                      placeholder="e.g. +254722123456"
+                      className="h-[42px] w-full rounded-[8px] border border-[#d1d5dc] px-[13px] text-[15px] focus:outline-none focus:ring-1 focus:ring-[#dc0032]"
+                    />
+                    {trackingError && <p className="mt-2 text-[12px] font-medium text-[#dc2626]">{trackingError}</p>}
+                  </div>
+                  <div className="mt-5 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleSendTrackingOtp}
+                      disabled={isSendingOtp}
+                      className={`rounded-[8px] px-7 py-[11px] text-[16px] font-semibold text-white ${
+                        isSendingOtp ? 'cursor-not-allowed bg-[#f78b7b]' : 'bg-[#f93f24] hover:bg-[#e02d14]'
+                      }`}
+                    >
+                      {isSendingOtp ? 'Sending OTP...' : 'Send OTP'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {trackingStage === 'otp' && (
+                <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-[25px] shadow-[0px_2px_4px_rgba(16,24,40,0.14)]">
+                  <h2 className="mb-2 text-[24px] font-bold text-[#101828]">Enter OTP</h2>
+                  <p className="mb-5 text-[14px] text-[#4b5563]">
+                    We sent an OTP to <span className="font-semibold">{trackingMobileNumber}</span>. Enter it below to continue.
+                  </p>
+                  <div>
+                    <label className="mb-2 block text-[14px] font-medium text-[#364153]">OTP</label>
+                    <input
+                      type="text"
+                      value={trackingOtp}
+                      onChange={(e) => {
+                        setTrackingOtp(e.target.value);
+                        setTrackingError(null);
+                      }}
+                      placeholder="Enter 6-digit OTP"
+                      className="h-[42px] w-full rounded-[8px] border border-[#d1d5dc] px-[13px] text-[15px] focus:outline-none focus:ring-1 focus:ring-[#dc0032]"
+                    />
+                    {trackingError && <p className="mt-2 text-[12px] font-medium text-[#dc2626]">{trackingError}</p>}
+                  </div>
+                  <div className="mt-5 flex justify-between">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTrackingStage('mobile');
+                        setTrackingError(null);
+                      }}
+                      className="rounded-[8px] border border-[#d1d5dc] bg-white px-6 py-[11px] text-[16px] font-semibold text-[#364153] hover:bg-gray-50"
+                    >
+                      Change mobile
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleVerifyTrackingOtp}
+                      disabled={isVerifyingOtp}
+                      className={`rounded-[8px] px-7 py-[11px] text-[16px] font-semibold text-white ${
+                        isVerifyingOtp ? 'cursor-not-allowed bg-[#f78b7b]' : 'bg-[#f93f24] hover:bg-[#e02d14]'
+                      }`}
+                    >
+                      {isVerifyingOtp ? 'Verifying...' : 'Verify OTP'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {trackingStage === 'progress' && applicationProgress && (
+                <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-[25px] shadow-[0px_2px_4px_rgba(16,24,40,0.14)]">
+                  <h2 className="mb-2 text-[24px] font-bold text-[#101828]">Application progress</h2>
+                  <p className="mb-1 text-[14px] text-[#4b5563]">
+                    Applicant: <span className="font-semibold text-[#101828]">{applicationProgress.applicantName}</span>
+                  </p>
+                  <p className="mb-1 text-[14px] text-[#4b5563]">
+                    Application ID: <span className="font-semibold text-[#101828]">#{applicationProgress.applicationId}</span>
+                  </p>
+                  <p className="mb-6 text-[14px] text-[#4b5563]">
+                    Current status:{' '}
+                    <span className="rounded-full bg-[#fef2f2] px-2 py-[2px] text-[12px] font-semibold text-[#b42318]">
+                      {applicationProgress.status}
+                    </span>
+                  </p>
+
+                  <div className="space-y-3">
+                    {applicationProgress.progress.map((item) => (
+                      <div
+                        key={item.stage}
+                        className="flex items-center justify-between rounded-[8px] border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2"
+                      >
+                        <span className="text-[14px] text-[#101828]">{item.stage}</span>
+                        <span
+                          className={`rounded-full px-2 py-[2px] text-[11px] font-semibold ${
+                            item.state === 'completed'
+                              ? 'bg-[#ecfdf3] text-[#027a48]'
+                              : item.state === 'in_progress'
+                                ? 'bg-[#fff7ed] text-[#b54708]'
+                                : 'bg-[#f2f4f7] text-[#667085]'
+                          }`}
+                        >
+                          {item.state === 'in_progress'
+                            ? 'In progress'
+                            : item.state === 'completed'
+                              ? 'Completed'
+                              : 'Pending'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-6 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTrackingStage('none');
+                        setCurrentStep(7);
+                        setTrackingError(null);
+                      }}
+                      className="rounded-[8px] border border-[#d1d5dc] bg-white px-6 py-[11px] text-[16px] font-semibold text-[#364153] hover:bg-gray-50"
+                    >
+                      Back to application
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+          <>
           {currentStep === 1 && (
             <>
               <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-[25px] shadow-[0px_2px_4px_rgba(16,24,40,0.14)]">
@@ -587,7 +904,15 @@ export default function CreditCardApplication() {
                   </div>
                   {renderInput('National ID', 'nationalId', 'Enter ID Number', true)}
                   {renderInput('Passport no.', 'passportNo', '', true)}
-                  {renderInput('Place of Birth.', 'placeOfBirth', '', true)}
+                  {renderInput(
+                    'Place of Birth.',
+                    'placeOfBirth',
+                    'Start typing location',
+                    true,
+                    'text',
+                    'personal-place-of-birth-options',
+                    KENYAN_LOCATION_SUGGESTIONS
+                  )}
                   {renderUploadField(
                     'Upload National ID',
                     'nationalIdUpload',
@@ -596,17 +921,25 @@ export default function CreditCardApplication() {
                     '.jpg,.jpeg,.png,.pdf',
                     isValidatingNationalIdUpload
                   )}
-                  {renderInput('Mobile Number', 'mobileNumber', '')}
+                  {renderInput('Mobile Number', 'mobileNumber', '', true)}
                   {renderUploadField('Upload Tax Pin certificate', 'taxPinUpload', true)}
                 </div>
 
                 <h3 className="mb-4 mt-4 text-[26px] font-bold leading-[1.1] text-[#364153]">Address Details</h3>
                 <div className="grid grid-cols-2 gap-4">
-                  {renderInput('Physical address', 'physicalAddress')}
-                  {renderInput('Town/City', 'townCity')}
+                  {renderInput('Physical address', 'physicalAddress', '', true)}
+                  {renderInput(
+                    'Town/City',
+                    'townCity',
+                    'Start typing town/city',
+                    true,
+                    'text',
+                    'personal-town-city-options',
+                    KENYAN_LOCATION_SUGGESTIONS
+                  )}
                   {renderInput('PO Box', 'poBox')}
                   {renderInput('Postal code', 'postalCode')}
-                  {renderInput('Email', 'email')}
+                  {renderInput('Email', 'email', '', true, 'email')}
                   {renderUploadField('Upload proof of address', 'proofOfAddressUpload', true)}
                 </div>
               </div>
@@ -678,7 +1011,10 @@ export default function CreditCardApplication() {
               signatureDataUrl={signatureDataUrl}
               onEdit={handleEditSection}
               onSubmit={handleFinalSubmit}
+              isSubmitting={isSubmittingApplication}
             />
+          )}
+          </>
           )}
 
         </div>

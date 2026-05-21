@@ -73,6 +73,37 @@ const selectChevronStyle: CSSProperties = {
   backgroundRepeat: 'no-repeat',
   backgroundPosition: 'right 13px center',
 };
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const KENYAN_LOCATION_SUGGESTIONS = [
+  'Nairobi',
+  'Mombasa',
+  'Kisumu',
+  'Nakuru',
+  'Eldoret',
+  'Thika',
+  'Kitengela',
+  'Machakos',
+  'Kiambu',
+  'Nyeri',
+  'Meru',
+  'Kakamega',
+];
+
+const parseCurrencyLikeNumber = (value: string) => {
+  const cleaned = value.replace(/[^\d.]/g, '');
+  const parsed = Number.parseFloat(cleaned);
+  return Number.isFinite(parsed) ? parsed : NaN;
+};
+
+const getCardTypeFromMonthlySalary = (monthlySalary: number) => {
+  if (!Number.isFinite(monthlySalary) || monthlySalary <= 0) return '';
+  if (monthlySalary < 50000) return 'Classic';
+  if (monthlySalary < 80000) return 'Classic Rewards';
+  if (monthlySalary < 150000) return 'Gold Rewards';
+  if (monthlySalary < 300000) return 'Platinum';
+  if (monthlySalary < 600000) return 'Visa Signature';
+  return 'Visa Infinite';
+};
 
 export default function EmploymentDetailsForm({ onBack, onProceed, initialData }: EmploymentDetailsFormProps) {
   const [formData, setFormData] = useState<EmploymentFormData>(initialData ?? emptyEmploymentFormData);
@@ -95,6 +126,58 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
   };
 
   const handleProceed = () => {
+    if (!formData.employmentType.trim()) {
+      alert('Employment Type is required.');
+      return;
+    }
+    if (!formData.workingSince.trim()) {
+      alert('Working since date is required.');
+      return;
+    }
+    if (!formData.jobTitle.trim()) {
+      alert('Job title is required.');
+      return;
+    }
+
+    if (isSelfEmployed) {
+      const selfEmployedRequired: Array<keyof EmploymentFormData> = [
+        'natureOfBusiness',
+        'monthlyTurnover',
+        'businessPhysicalAddress',
+        'businessCounty',
+        'businessEmail',
+      ];
+      const missing = selfEmployedRequired.find((field) => !String(formData[field] ?? '').trim());
+      if (missing) {
+        alert('Please complete all required self-employed details.');
+        return;
+      }
+      if (!EMAIL_REGEX.test(formData.businessEmail.trim())) {
+        alert('Please enter a valid business email address containing @.');
+        return;
+      }
+    } else {
+      const salariedRequired: Array<keyof EmploymentFormData> = [
+        'employerName',
+        'industrySector',
+        'monthlySalary',
+        'creditCardIncomeType',
+        'physicalAddress',
+        'townCity',
+      ];
+      const missing = salariedRequired.find((field) => !String(formData[field] ?? '').trim());
+      if (missing) {
+        alert('Please complete all required employment details.');
+        return;
+      }
+      if (isSalaried) {
+        if (!formData.proofOfEmploymentUpload || !formData.workPermitUpload || !formData.payslipUpload) {
+          alert('Please upload all required employment documents.');
+          return;
+        }
+      }
+    }
+
     console.log('Employment Form Data:', formData);
     onProceed(formData);
   };
@@ -145,8 +228,6 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
     </div>
   );
 
-  const workingSinceIsText = isSalaried;
-
   return (
     <>
       <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-[25px] shadow-[0px_2px_4px_rgba(16,24,40,0.14)]">
@@ -190,7 +271,9 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
             </div>
 
             <div>
-              <label className={labelClass}>Job title</label>
+              <label className={labelClass}>
+                Job title <span className="text-[#fb2c36]">*</span>
+              </label>
               <input
                 type="text"
                 placeholder="Enter job title"
@@ -203,7 +286,9 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
             {isSelfEmployed && (
               <>
                 <div>
-                  <label className={labelClass}>Nature of business</label>
+                  <label className={labelClass}>
+                    Nature of business <span className="text-[#fb2c36]">*</span>
+                  </label>
                   <input
                     type="text"
                     placeholder="Enter full name"
@@ -213,7 +298,9 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Working since</label>
+                  <label className={labelClass}>
+                    Working since <span className="text-[#fb2c36]">*</span>
+                  </label>
                   <input
                     type="date"
                     value={formData.workingSince}
@@ -222,7 +309,9 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Monthly turn over</label>
+                  <label className={labelClass}>
+                    Monthly turn over <span className="text-[#fb2c36]">*</span>
+                  </label>
                   <input
                     type="text"
                     placeholder="Enter amount"
@@ -232,7 +321,9 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Physical address</label>
+                  <label className={labelClass}>
+                    Physical address <span className="text-[#fb2c36]">*</span>
+                  </label>
                   <input
                     type="text"
                     placeholder="Enter address"
@@ -252,7 +343,9 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>County</label>
+                  <label className={labelClass}>
+                    County <span className="text-[#fb2c36]">*</span>
+                  </label>
                   <input
                     type="text"
                     placeholder="Enter county"
@@ -282,7 +375,9 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
                   />
                 </div>
                 <div className="col-span-2">
-                  <label className={labelClass}>Email</label>
+                  <label className={labelClass}>
+                    Email <span className="text-[#fb2c36]">*</span>
+                  </label>
                   <input
                     type="email"
                     placeholder=""
@@ -297,7 +392,9 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
             {!isSelfEmployed && (
               <>
                 <div>
-                  <label className={labelClass}>Name of Employer</label>
+                  <label className={labelClass}>
+                    Name of Employer <span className="text-[#fb2c36]">*</span>
+                  </label>
                   <input
                     type="text"
                     placeholder="Enter full name"
@@ -308,10 +405,11 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
                 </div>
 
                 <div>
-                  <label className={labelClass}>Working since</label>
+                  <label className={labelClass}>
+                    Working since <span className="text-[#fb2c36]">*</span>
+                  </label>
                   <input
-                    type={workingSinceIsText ? 'text' : 'date'}
-                    placeholder={workingSinceIsText ? 'mm/dd/yyyy' : undefined}
+                    type="date"
                     value={formData.workingSince}
                     onChange={(e) => handleInputChange('workingSince', e.target.value)}
                     className={inputClassName}
@@ -319,7 +417,9 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
                 </div>
 
                 <div>
-                  <label className={labelClass}>Industry/Sector</label>
+                  <label className={labelClass}>
+                    Industry/Sector <span className="text-[#fb2c36]">*</span>
+                  </label>
                   <select
                     value={formData.industrySector}
                     onChange={(e) => handleInputChange('industrySector', e.target.value)}
@@ -338,23 +438,33 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
                 </div>
 
                 <div>
-                  <label className={labelClass}>Monthly Net salary (Gross less Tax)</label>
+                  <label className={labelClass}>
+                    Monthly Net salary (Gross less Tax) <span className="text-[#fb2c36]">*</span>
+                  </label>
                   <input
                     type="text"
                     placeholder="Enter amount"
                     value={formData.monthlySalary}
-                    onChange={(e) => handleInputChange('monthlySalary', e.target.value)}
+                    onChange={(e) => {
+                      const salaryInput = e.target.value;
+                      const salaryValue = parseCurrencyLikeNumber(salaryInput);
+                      handleInputChange('monthlySalary', salaryInput);
+                      handleInputChange('creditCardIncomeType', getCardTypeFromMonthlySalary(salaryValue));
+                    }}
                     className={inputClassName}
                   />
                 </div>
 
                 <div>
-                  <label className={labelClass}>Type of Credit card based on income</label>
+                  <label className={labelClass}>
+                    Type of Credit card based on income <span className="text-[#fb2c36]">*</span>
+                  </label>
                   <input
                     type="text"
+                    readOnly
+                    placeholder="You can qualify for a..."
                     value={formData.creditCardIncomeType}
-                    onChange={(e) => handleInputChange('creditCardIncomeType', e.target.value)}
-                    className={inputClassName}
+                    className={`${inputClassName} bg-[#f9fafb]`}
                   />
                 </div>
 
@@ -395,7 +505,9 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
               {isSalaried ? (
                 <>
                   <div>
-                    <label className={labelClass}>Employer&apos;s physical address</label>
+                    <label className={labelClass}>
+                      Employer&apos;s physical address <span className="text-[#fb2c36]">*</span>
+                    </label>
                     <input
                       type="text"
                       placeholder="Enter address"
@@ -405,9 +517,12 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
                     />
                   </div>
                   <div>
-                    <label className={labelClass}>Town/City</label>
+                    <label className={labelClass}>
+                      Town/City <span className="text-[#fb2c36]">*</span>
+                    </label>
                     <input
                       type="text"
+                      list="employment-town-city-options"
                       placeholder="Enter town/city"
                       value={formData.townCity}
                       onChange={(e) => handleInputChange('townCity', e.target.value)}
@@ -417,7 +532,9 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
                 </>
               ) : (
                 <div className="col-span-2">
-                  <label className={labelClass}>Employer&apos;s physical address</label>
+                  <label className={labelClass}>
+                    Employer&apos;s physical address <span className="text-[#fb2c36]">*</span>
+                  </label>
                   <input
                     type="text"
                     placeholder="Enter address"
@@ -431,9 +548,12 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
               {!isSalaried && (
                 <>
                   <div>
-                    <label className={labelClass}>Town/City</label>
+                    <label className={labelClass}>
+                      Town/City <span className="text-[#fb2c36]">*</span>
+                    </label>
                     <input
                       type="text"
+                      list="employment-town-city-options"
                       placeholder="Enter town/city"
                       value={formData.townCity}
                       onChange={(e) => handleInputChange('townCity', e.target.value)}
@@ -536,6 +656,11 @@ export default function EmploymentDetailsForm({ onBack, onProceed, initialData }
           </div>
         )}
       </div>
+      <datalist id="employment-town-city-options">
+        {KENYAN_LOCATION_SUGGESTIONS.map((item) => (
+          <option key={item} value={item} />
+        ))}
+      </datalist>
 
       <div className="mt-4 flex justify-between">
         <button

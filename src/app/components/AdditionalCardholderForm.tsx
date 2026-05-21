@@ -36,6 +36,7 @@ const inputClassName =
   'h-[42px] w-full rounded-[8px] border border-[#d1d5dc] px-[13px] text-[15px] leading-[24px] text-[#0a0a0a] placeholder:text-[rgba(10,10,10,0.5)] focus:outline-none focus:ring-1 focus:ring-[#dc0032]';
 
 const labelClass = 'mb-2 block text-[14px] font-medium text-[#364153]';
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function AdditionalCardholderForm({ onBack, onProceed, initialData }: AdditionalCardholderFormProps) {
   const [formData, setFormData] = useState<AdditionalCardholderFormData>(
@@ -47,6 +48,33 @@ export default function AdditionalCardholderForm({ onBack, onProceed, initialDat
   };
 
   const handleProceed = () => {
+    const allFieldsEmpty = Object.values(formData).every((value) => !value.trim());
+    if (allFieldsEmpty) {
+      onProceed(formData);
+      return;
+    }
+
+    const requiredFields: Array<keyof AdditionalCardholderFormData> = [
+      'firstName',
+      'lastName',
+      'dateOfBirth',
+      'gender',
+      'nationalId',
+      'mobile',
+      'email',
+      'relationship',
+    ];
+    const missingField = requiredFields.find((field) => !String(formData[field] ?? '').trim());
+    if (missingField) {
+      alert('Please complete all required fields for additional cardholder or clear the section.');
+      return;
+    }
+
+    if (!EMAIL_REGEX.test(formData.email.trim())) {
+      alert('Please enter a valid email address containing @ for additional cardholder.');
+      return;
+    }
+
     console.log('Additional Cardholder Data:', formData);
     onProceed(formData);
   };
@@ -73,7 +101,9 @@ export default function AdditionalCardholderForm({ onBack, onProceed, initialDat
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className={labelClass}>First Name</label>
+            <label className={labelClass}>
+              First Name <span className="text-[#fb2c36]">*</span>
+            </label>
             <input
               type="text"
               placeholder="Enter first name"
@@ -83,7 +113,9 @@ export default function AdditionalCardholderForm({ onBack, onProceed, initialDat
             />
           </div>
           <div>
-            <label className={labelClass}>Last Name</label>
+            <label className={labelClass}>
+              Last Name <span className="text-[#fb2c36]">*</span>
+            </label>
             <input
               type="text"
               placeholder="Enter last name"
@@ -94,7 +126,9 @@ export default function AdditionalCardholderForm({ onBack, onProceed, initialDat
           </div>
 
           <div>
-            <label className={labelClass}>Date of Birth</label>
+            <label className={labelClass}>
+              Date of Birth <span className="text-[#fb2c36]">*</span>
+            </label>
             <input
               type="date"
               value={formData.dateOfBirth}
@@ -103,7 +137,9 @@ export default function AdditionalCardholderForm({ onBack, onProceed, initialDat
             />
           </div>
           <div>
-            <label className={labelClass}>Gender</label>
+            <label className={labelClass}>
+              Gender <span className="text-[#fb2c36]">*</span>
+            </label>
             <select
               value={formData.gender}
               onChange={(e) => handleInputChange('gender', e.target.value)}
@@ -138,7 +174,9 @@ export default function AdditionalCardholderForm({ onBack, onProceed, initialDat
           </div>
 
           <div>
-            <label className={labelClass}>National ID</label>
+            <label className={labelClass}>
+              National ID <span className="text-[#fb2c36]">*</span>
+            </label>
             <input
               type="text"
               placeholder="Enter ID Number"
@@ -148,7 +186,9 @@ export default function AdditionalCardholderForm({ onBack, onProceed, initialDat
             />
           </div>
           <div>
-            <label className={labelClass}>Mobile</label>
+            <label className={labelClass}>
+              Mobile <span className="text-[#fb2c36]">*</span>
+            </label>
             <input
               type="text"
               placeholder=""
@@ -159,7 +199,9 @@ export default function AdditionalCardholderForm({ onBack, onProceed, initialDat
           </div>
 
           <div>
-            <label className={labelClass}>Email</label>
+            <label className={labelClass}>
+              Email <span className="text-[#fb2c36]">*</span>
+            </label>
             <input
               type="email"
               placeholder=""
@@ -169,7 +211,9 @@ export default function AdditionalCardholderForm({ onBack, onProceed, initialDat
             />
           </div>
           <div>
-            <label className={labelClass}>Relationship to Cardholder</label>
+            <label className={labelClass}>
+              Relationship to Cardholder <span className="text-[#fb2c36]">*</span>
+            </label>
             <input
               type="text"
               placeholder=""
